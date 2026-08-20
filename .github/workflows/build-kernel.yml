@@ -4,9 +4,9 @@ name: Build Tepuy Kernel for Poco F6 (peridot)
   workflow_dispatch:
     inputs:
       defconfig:
-        description: 'Defconfig to use'
+        description: 'Defconfig to use (default: gki_defconfig)'
         required: true
-        default: 'peridot_defconfig'
+        default: 'gki_defconfig'
         type: string
 
 env:
@@ -55,6 +55,14 @@ jobs:
         run: |
           git clone --depth=1 -b lineage-23.2             https://github.com/LineageOS/android_kernel_xiaomi_sm8635             $HOME/kernel-peridot
 
+      - name: List available defconfigs
+        run: |
+          echo "=== Defconfigs disponibles ==="
+          ls $HOME/kernel-peridot/arch/arm64/configs/ || echo "No hay archivos en arch/arm64/configs/"
+          echo ""
+          echo "=== Build configs ==="
+          ls $HOME/kernel-peridot/build.config* 2>/dev/null || true
+
       - name: Apply Tepuy GameMode patches (Python)
         run: |
           cd $HOME/kernel-peridot
@@ -68,6 +76,8 @@ jobs:
       - name: Build kernel
         run: |
           cd $HOME/kernel-peridot
+          mkdir -p out
+
           export CC="clang"
           export CXX="clang++"
           export CROSS_COMPILE="aarch64-linux-gnu-"
@@ -85,8 +95,11 @@ jobs:
           make O=out ${{ github.event.inputs.defconfig }} 2>&1 | tee -a out/build.log
           make -j$(nproc --all) O=out 2>&1 | tee -a out/build.log
 
-          echo "Build completed"
-          ls -lh out/arch/arm64/boot/
+          for f in Image Image.gz Image.gz-dtb; do
+            if [ -f "out/arch/arm64/boot/$f" ]; then
+              echo "Found: $f"
+            fi
+          done
 
       - name: Prepare AnyKernel3
         run: |
@@ -94,7 +107,14 @@ jobs:
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git
           cd AnyKernel3
           cp ${{ github.workspace }}/anykernel.sh ./anykernel.sh
-          cp $HOME/kernel-peridot/out/arch/arm64/boot/Image.gz ./Image.gz
+
+          # Detectar que imagen genero el build
+          if [ -f "$HOME/kernel-peridot/out/arch/arm64/boot/Image.gz" ]; then
+            cp $HOME/kernel-peridot/out/arch/arm64/boot/Image.gz ./Image.gz
+          elif [ -f "$HOME/kernel-peridot/out/arch/arm64/boot/Image" ]; then
+            cp $HOME/kernel-peridot/out/arch/arm64/boot/Image ./Image
+          fi
+
           zip -r9 $HOME/Tepuy-GameMode-peridot.zip * -x "*.zip" "*.git*" "README*"
           echo "AnyKernel3 zip created"
           ls -lh $HOME/Tepuy-GameMode-peridot.zip
@@ -103,8 +123,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: kernel-image
-          path: ~/kernel-peridot/out/arch/arm64/boot/Image.gz
+          path: |
+            ~/kernel-peridot/out/arch/arm64/boot/Image.gz
+            ~/kernel-peridot/out/arch/arm64/boot/Image
           retention-days: 30
+          if-no-files-found: ignore
 
       - name: Upload AnyKernel3 zip
         uses: actions/upload-artifact@v4
