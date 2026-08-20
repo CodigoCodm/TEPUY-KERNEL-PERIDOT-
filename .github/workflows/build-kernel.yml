@@ -45,12 +45,14 @@ jobs:
           mkdir -p $HOME/toolchains
           cd $HOME/toolchains
 
-          # Método confiable: git sparse-checkout para descargar solo clang-r530567
-          git clone --depth=1 --filter=blob:none --sparse             https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86             clang-repo
+          # Estrategia: clone shallow + sparse checkout para descargar SOLO clang-r530567
+          git clone --depth=1 --filter=tree:0 --no-checkout             https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86             clang-repo
           cd clang-repo
+          git sparse-checkout init --cone
           git sparse-checkout set clang-r530567
+          git checkout
 
-          # Mover el toolchain a la ubicación esperada
+          # Mover a la ubicación esperada
           mv clang-r530567 $HOME/toolchains/clang-r530567
           cd $HOME/toolchains
           rm -rf clang-repo
