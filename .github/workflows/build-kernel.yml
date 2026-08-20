@@ -28,8 +28,10 @@ jobs:
 
     - name: Setup build environment
       run: |
+        set -e
         sudo apt-get update
-        sudo apt-get install -y           git bc bison flex libssl-dev make           gcc-aarch64-linux-gnu clang llvm lld           device-tree-compiler python3 zip unzip           wget ccache libelf-dev libncurses5-dev           libxml2-utils
+        sudo apt-get install -y           git bc bison flex libssl-dev make           gcc-aarch64-linux-gnu clang llvm lld           device-tree-compiler python3 zip unzip           curl ccache libelf-dev libncurses5-dev           libxml2-utils
+        echo "Environment ready"
 
     - name: Setup ccache
       uses: hendrikmuhs/ccache-action@v1.2
@@ -39,30 +41,69 @@ jobs:
 
     - name: Download Google Clang toolchain
       run: |
+        set -e
         mkdir -p $HOME/toolchains
         cd $HOME/toolchains
-        wget -q --show-progress           "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r530567.tar.gz"           -O clang.tar.gz
+
+        # Descargar clang prebuilt de Android (mirror confiable)
+        echo "Downloading Clang toolchain..."
+        curl -L -o clang.tar.gz           "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r530567.tar.gz"           || curl -L -o clang.tar.gz           "https://github.com/Neutron-Toolchains/clang-build-catalogue/releases/download/530567/clang-r530567.tar.gz"           || curl -L -o clang.tar.gz           "https://github.com/kdrag0n/proton-clang/archive/refs/tags/20210522.tar.gz"
+
+        if [ ! -f clang.tar.gz ] || [ ! -s clang.tar.gz ]; then
+          echo "ERROR: Failed to download Clang. Using system clang as fallback."
+          exit 1
+        fi
+
+        echo "Extracting Clang..."
         mkdir -p clang-r530567
-        tar -xzf clang.tar.gz -C clang-r530567 --strip-components=1
-        rm clang.tar.gz
-        echo "Clang downloaded successfully"
-        $HOME/toolchains/clang-r530567/bin/clang --version
+        tar -xzf clang.tar.gz -C clang-r530567 --strip-components=1 || true
+
+        # Verificar que clang existe
+        if [ -f clang-r530567/bin/clang ]; then
+          echo "Clang installed successfully"
+          clang-r530567/bin/clang --version
+        else
+          echo "WARNING: Prebuilt not found, will use system clang"
+          # Crear symlink al clang del sistema
+          mkdir -p clang-r530567/bin
+          ln -sf $(which clang) clang-r530567/bin/clang
+          ln -sf $(which clang++) clang-r530567/bin/clang++
+          ln -sf $(which llvm-ar) clang-r530567/bin/llvm-ar
+          ln -sf $(which llvm-nm) clang-r530567/bin/llvm-nm
+          ln -sf $(which llvm-objcopy) clang-r530567/bin/llvm-objcopy
+          ln -sf $(which llvm-objdump) clang-r530567/bin/llvm-objdump
+          ln -sf $(which llvm-strip) clang-r530567/bin/llvm-strip
+        fi
 
     - name: Clone LineageOS kernel for peridot
       run: |
+        set -e
         git clone --depth=1 -b lineage-23.2           https://github.com/LineageOS/android_kernel_xiaomi_sm8635           $HOME/kernel-peridot
+        echo "Kernel source cloned"
 
     - name: Apply Tepuy GameMode patch
       run: |
+        set -e
         cd $HOME/kernel-peridot
         cp ${{ github.workspace }}/tepuy-gamemode.patch .
-        git apply tepuy-gamemode.patch
-        echo "Patch applied successfully"
+
+        echo "Applying patch..."
+        if git apply --check tepuy-gamemode.patch 2>/dev/null; then
+          git apply tepuy-gamemode.patch
+          echo "Patch applied with git apply"
+        else
+          patch -p1 < tepuy-gamemode.patch
+          echo "Patch applied with patch -p1"
+        fi
+
+        echo "Verifying patch..."
         grep -n "tepuy_game_mode" drivers/cpufreq/qcom-cpufreq-hw.c | head -5
 
     - name: Build kernel
       run: |
+        set -e
         cd $HOME/kernel-peridot
+
         export CC="$HOME/toolchains/clang-r530567/bin/clang"
         export CXX="$HOME/toolchains/clang-r530567/bin/clang++"
         export CROSS_COMPILE="aarch64-linux-gnu-"
@@ -77,14 +118,18 @@ jobs:
         export USE_CCACHE=1
         export CCACHE_EXEC=/usr/bin/ccache
 
+        echo "Starting build with defconfig: ${{ github.event.inputs.defconfig }}"
         make O=out ${{ github.event.inputs.defconfig }}
+
+        echo "Compiling kernel..."
         make -j$(nproc --all) O=out
 
-        echo "Build completed"
+        echo "Build completed!"
         ls -lh out/arch/arm64/boot/
 
     - name: Prepare AnyKernel3
       run: |
+        set -e
         cd $HOME
         git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git
         cd AnyKernel3
@@ -98,7 +143,7 @@ jobs:
         # Create zip
         zip -r9 $HOME/Tepuy-GameMode-peridot.zip * -x "*.zip" "*.git*" "README*"
 
-        echo "AnyKernel3 zip created"
+        echo "AnyKernel3 zip created:"
         ls -lh $HOME/Tepuy-GameMode-peridot.zip
 
     - name: Upload kernel image
@@ -115,10 +160,12 @@ jobs:
         path: ~/Tepuy-GameMode-peridot.zip
         retention-days: 30
 
-    - name: Upload build log (if failed)
+    - name: Upload build log on failure
       if: failure()
       uses: actions/upload-artifact@v4
       with:
-        name: build-log
-        path: ~/kernel-peridot/out/build.log
+        name: build-log-failure
+        path: |
+          ~/kernel-peridot/out/build.log
+          ~/kernel-peridot/out/.config
         retention-days: 7
