@@ -38,7 +38,7 @@ jobs:
             device-tree-compiler python3 zip unzip \
             wget ccache libelf-dev libncurses-dev \
             libxml2-utils gcc-arm-linux-gnueabi \
-            dwarves
+            dwarves jq
 
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2
@@ -159,12 +159,33 @@ jobs:
           # 12.0.5 para peridot es una recovery de 64 bits pura y no puede
           # ejecutar esos binarios de 32 bits, lo que produce el error
           # "Busybox setup failed. Aborting..." al flashear.
-          # Aquí los reemplazamos por las versiones arm64-v8a incluidas
-          # dentro del APK oficial de Magisk.
-          echo "=== Descargando Magisk para extraer binarios arm64 ==="
-          curl -Lo /tmp/magisk.apk \
-            https://github.com/topjohnwu/Magisk/releases/latest/download/app-release.apk
-          unzip -o /tmp/magisk.apk -d /tmp/magisk_extract
+          # Aqui los reemplazamos por las versiones arm64-v8a incluidas
+          # dentro del APK oficial de Magisk, resolviendo el nombre del
+          # asset dinamicamente via la API de GitHub (el nombre del archivo
+          # cambia con cada version, ej. Magisk-v30.7.apk).
+          echo "=== Resolviendo URL del APK de Magisk (release mas reciente) ==="
+          APK_URL=$(curl -sf https://api.github.com/repos/topjohnwu/Magisk/releases/latest \
+            | jq -r '.assets[] | select(.name | test("^Magisk-v.*\\.apk$")) | .browser_download_url' \
+            | head -n1)
+
+          if [ -z "$APK_URL" ] || [ "$APK_URL" == "null" ]; then
+            echo "ERROR: No se pudo resolver la URL del APK de Magisk desde la API de GitHub."
+            echo "Respuesta de la API:"
+            curl -sf https://api.github.com/repos/topjohnwu/Magisk/releases/latest || true
+            exit 1
+          fi
+
+          echo "APK resuelto: $APK_URL"
+          curl -Lfo /tmp/magisk.apk "$APK_URL"
+
+          echo "=== Verificando que el archivo descargado sea un zip valido ==="
+          if ! unzip -tq /tmp/magisk.apk > /dev/null; then
+            echo "ERROR: /tmp/magisk.apk no es un zip valido. Descarga fallida o URL incorrecta."
+            file /tmp/magisk.apk
+            exit 1
+          fi
+
+          unzip -o /tmp/magisk.apk -d /tmp/magisk_extract > /dev/null
 
           echo "=== Contenido disponible en lib/arm64-v8a ==="
           ls -la /tmp/magisk_extract/lib/arm64-v8a/
@@ -177,7 +198,7 @@ jobs:
           echo "=== Verificando arquitectura de binarios reemplazados ==="
           file tools/busybox tools/magiskboot tools/magiskpolicy
 
-          # Verificación dura: si alguno no quedó en aarch64, aborta el build
+          # Verificacion dura: si alguno no quedo en aarch64, aborta el build
           for bin in tools/busybox tools/magiskboot tools/magiskpolicy; do
             if ! file "$bin" | grep -qi "aarch64"; then
               echo "ERROR: $bin no quedo en arquitectura aarch64. Abortando build."
