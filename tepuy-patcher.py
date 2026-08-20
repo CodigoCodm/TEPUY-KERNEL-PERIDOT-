@@ -3,38 +3,171 @@
 
 import os
 import sys
+import subprocess
+import shutil
 
 KERNEL_DIR = sys.argv[1] if len(sys.argv) > 1 else "."
 
-# === FIX: OpenSSL 3.0 compatibility ===
+# ============================================================
+# Repository validation
+# Target: original Peridot kernel
+# peridot-dev/android_kernel_xiaomi_sm8635
+#
+# The repository itself is cloned by the workflow.
+# This script only validates the source directory passed to it.
+# ============================================================
+
+def fail(message):
+    print(f"[ERROR] {message}")
+    sys.exit(1)
+
+
+def backup(path):
+    backup_path = path + ".tepuy.bak"
+
+    if not os.path.exists(backup_path):
+        shutil.copy2(path, backup_path)
+        print(f"[INFO] Backup: {backup_path}")
+
+
+def require_file(path):
+    if not os.path.isfile(path):
+        fail(f"Archivo requerido no encontrado: {path}")
+
+
+def replace_required(content, old, new, description):
+    if new in content:
+        print(f"[INFO] {description}: ya aplicado")
+        return content
+
+    if old not in content:
+        fail(
+            f"No se encontró el bloque esperado para:\n"
+            f"  {description}\n"
+            f"El source no coincide con la versión esperada."
+        )
+
+    content = content.replace(old, new, 1)
+    print(f"[OK] {description}")
+    return content
+
+
+# ============================================================
+# Verify kernel tree
+# ============================================================
+
+if not os.path.isdir(KERNEL_DIR):
+    fail(f"No existe el directorio del kernel: {KERNEL_DIR}")
+
+if not os.path.isfile(os.path.join(KERNEL_DIR, "Makefile")):
+    fail(
+        "El directorio indicado no parece ser la raíz del kernel "
+        "(no existe Makefile)."
+    )
+
+# Check Git remote when available.
+# We do NOT clone here; the workflow is responsible for that.
+try:
+    result = subprocess.run(
+        ["git", "-C", KERNEL_DIR, "remote", "-v"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        check=False,
+    )
+
+    remote = result.stdout
+
+    if remote:
+        if "peridot-dev/android_kernel_xiaomi_sm8635" in remote:
+            print("[OK] Repo original Peridot detectado")
+        elif "LineageOS/android_kernel_xiaomi_sm8635" in remote:
+            fail(
+                "El workflow está utilizando el repositorio de LineageOS.\n"
+                "Usa el repo original:\n"
+                "https://github.com/peridot-dev/android_kernel_xiaomi_sm8635.git"
+            )
+        else:
+            print(
+                "[INFO] Git remoto diferente/no identificado. "
+                "Se continuará usando la estructura del source."
+            )
+
+except Exception:
+    print("[INFO] No se pudo comprobar el remote Git.")
+
+
+# ============================================================
+# FIX: OpenSSL 3.0 compatibility
+# ============================================================
+
 extract_cert = os.path.join(KERNEL_DIR, "certs/extract-cert.c")
-if os.path.exists(extract_cert):
-    with open(extract_cert, "r") as file:
-        content = file.read()
-    # Fix: key_pass is declared inside #ifdef USE_PKCS11_ENGINE
-    # but used outside that #ifdef when not BoringSSL.
-    # Remove the #ifdef around key_pass declaration.
-    old_decl = """#ifdef USE_PKCS11_ENGINE
+
+require_file(extract_cert)
+
+with open(extract_cert, "r", encoding="utf-8") as file:
+    content = file.read()
+
+old_decl = """#ifdef USE_PKCS11_ENGINE
 static const char *key_pass;
 #endif"""
-    new_decl = "static const char *key_pass;"
-    if old_decl in content:
-        content = content.replace(old_decl, new_decl)
-        with open(extract_cert, "w") as file:
-            file.write(content)
-        print("[OK] certs/extract-cert.c patched for OpenSSL 3.0")
-    else:
-        print("[INFO] certs/extract-cert.c already patched or different format")
 
-# === 1. drivers/cpufreq/qcom-cpufreq-hw.c ===
-cpufreq_file = os.path.join(KERNEL_DIR, "drivers/cpufreq/qcom-cpufreq-hw.c")
-with open(cpufreq_file, "r") as f:
+new_decl = "static const char *key_pass;"
+
+if old_decl in content:
+    backup(extract_cert)
+
+    content = content.replace(old_decl, new_decl, 1)
+
+    with open(extract_cert, "w", encoding="utf-8") as file:
+        file.write(content)
+
+    print("[OK] certs/extract-cert.c patched for OpenSSL 3.0")
+
+elif new_decl in content:
+    print("[INFO] certs/extract-cert.c ya contiene el fix OpenSSL 3.0")
+
+else:
+    print(
+        "[INFO] certs/extract-cert.c already patched "
+        "or different format"
+    )
+
+
+# ============================================================
+# 1. drivers/cpufreq/qcom-cpufreq-hw.c
+# ============================================================
+
+cpufreq_file = os.path.join(
+    KERNEL_DIR,
+    "drivers/cpufreq/qcom-cpufreq-hw.c"
+)
+
+require_file(cpufreq_file)
+
+with open(cpufreq_file, "r", encoding="utf-8") as f:
     content = f.read()
 
-content = content.replace(
+backup(cpufreq_file)
+
+
+# ------------------------------------------------------------
+# Includes
+# ------------------------------------------------------------
+
+content = replace_required(
+    content,
     "#include <linux/of_address.h>\n",
-    "#include <linux/of_address.h>\n#include <linux/of.h>\n#include <linux/kobject.h>\n"
+    "#include <linux/of_address.h>\n"
+    "#include <linux/of.h>\n"
+    "#include <linux/kobject.h>\n",
+    "qcom-cpufreq-hw.c: includes Tepuy",
 )
+
+
+# ------------------------------------------------------------
+# Tepuy GameMode
+# ------------------------------------------------------------
 
 tepuy_code = """
 /* ========================================================================
@@ -92,10 +225,17 @@ late_initcall(tepuy_boost_init);
 /* ======================================================================== */
 """
 
-content = content.replace(
+content = replace_required(
+    content,
     "#include <soc/qcom/cpufreq.h>\n",
-    "#include <soc/qcom/cpufreq.h>\n" + tepuy_code
+    "#include <soc/qcom/cpufreq.h>\n" + tepuy_code,
+    "qcom-cpufreq-hw.c: Tepuy GameMode",
 )
+
+
+# ------------------------------------------------------------
+# CPU OPP fallback
+# ------------------------------------------------------------
 
 old_code1 = """
 \tret = dev_pm_opp_adjust_voltage(cpu_dev, freq_hz, volt, volt, volt);
@@ -105,6 +245,7 @@ old_code1 = """
 \t}
 
 \treturn dev_pm_opp_enable(cpu_dev, freq_hz);
+}
 """
 
 new_code1 = """
@@ -144,29 +285,68 @@ new_code1 = """
 \t}
 
 \treturn ret;
+}
 """
 
-content = content.replace(old_code1, new_code1)
+content = replace_required(
+    content,
+    old_code1,
+    new_code1,
+    "qcom-cpufreq-hw.c: CPU OPP GameMode fallback",
+)
 
-with open(cpufreq_file, "w") as f:
+with open(cpufreq_file, "w", encoding="utf-8") as f:
     f.write(content)
 
 print("[OK] drivers/cpufreq/qcom-cpufreq-hw.c modificado")
 
-# === 2. drivers/gpu/drm/msm/adreno/adreno_gpu.c ===
-adreno_file = os.path.join(KERNEL_DIR, "drivers/gpu/drm/msm/adreno/adreno_gpu.c")
-with open(adreno_file, "r") as f:
+
+# ============================================================
+# 2. drivers/gpu/drm/msm/adreno/adreno_gpu.c
+# ============================================================
+
+adreno_file = os.path.join(
+    KERNEL_DIR,
+    "drivers/gpu/drm/msm/adreno/adreno_gpu.c"
+)
+
+require_file(adreno_file)
+
+with open(adreno_file, "r", encoding="utf-8") as f:
     content = f.read()
 
-content = content.replace(
+backup(adreno_file)
+
+
+# ------------------------------------------------------------
+# Includes
+# ------------------------------------------------------------
+
+content = replace_required(
+    content,
     "#include <linux/of_address.h>\n",
-    "#include <linux/of_address.h>\n#include <linux/of.h>\n"
+    "#include <linux/of_address.h>\n"
+    "#include <linux/of.h>\n",
+    "adreno_gpu.c: linux/of.h",
 )
 
-content = content.replace(
-    "#include \"a7xx_gpu.h\"\n",
-    "#include \"a7xx_gpu.h\"\n\nextern bool tepuy_game_mode;\n"
+
+# ------------------------------------------------------------
+# Tepuy GameMode extern
+# ------------------------------------------------------------
+
+content = replace_required(
+    content,
+    '#include "a7xx_gpu.h"\n',
+    '#include "a7xx_gpu.h"\n\n'
+    'extern bool tepuy_game_mode;\n',
+    "adreno_gpu.c: Tepuy GameMode extern",
 )
+
+
+# ------------------------------------------------------------
+# GPU 1100 MHz
+# ------------------------------------------------------------
 
 old_code2 = """
 \t\tDRM_DEV_ERROR(dev, "Unable to set the OPP table\\n");
@@ -195,22 +375,52 @@ new_code2 = """
 \t\t/* Find the fastest defined rate */
 """
 
-content = content.replace(old_code2, new_code2)
+content = replace_required(
+    content,
+    old_code2,
+    new_code2,
+    "adreno_gpu.c: GPU 1100 MHz Tepuy OPP",
+)
 
-with open(adreno_file, "w") as f:
+with open(adreno_file, "w", encoding="utf-8") as f:
     f.write(content)
 
 print("[OK] drivers/gpu/drm/msm/adreno/adreno_gpu.c modificado")
 
-# === 3. drivers/gpu/drm/msm/adreno/a6xx_gmu.c ===
-gmu_file = os.path.join(KERNEL_DIR, "drivers/gpu/drm/msm/adreno/a6xx_gmu.c")
-with open(gmu_file, "r") as f:
+
+# ============================================================
+# 3. drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+# ============================================================
+
+gmu_file = os.path.join(
+    KERNEL_DIR,
+    "drivers/gpu/drm/msm/adreno/a6xx_gmu.c"
+)
+
+require_file(gmu_file)
+
+with open(gmu_file, "r", encoding="utf-8") as f:
     content = f.read()
 
-content = content.replace(
-    "#include \"msm_mmu.h\"\n",
-    "#include \"msm_mmu.h\"\n\nextern bool tepuy_game_mode;\n"
+backup(gmu_file)
+
+
+# ------------------------------------------------------------
+# Tepuy GameMode extern
+# ------------------------------------------------------------
+
+content = replace_required(
+    content,
+    '#include "msm_mmu.h"\n',
+    '#include "msm_mmu.h"\n\n'
+    'extern bool tepuy_game_mode;\n',
+    "a6xx_gmu.c: Tepuy GameMode extern",
 )
+
+
+# ------------------------------------------------------------
+# GMU frequency index
+# ------------------------------------------------------------
 
 old_code3 = """
 \tfor (perf_index = 0; perf_index < gmu->nr_gpu_freqs - 1; perf_index++)
@@ -239,10 +449,83 @@ new_code3 = """
 \tgmu->current_perf_index = perf_index;
 """
 
-content = content.replace(old_code3, new_code3)
+content = replace_required(
+    content,
+    old_code3,
+    new_code3,
+    "a6xx_gmu.c: Tepuy GameMode GPU perf index",
+)
 
-with open(gmu_file, "w") as f:
+with open(gmu_file, "w", encoding="utf-8") as f:
     f.write(content)
 
 print("[OK] drivers/gpu/drm/msm/adreno/a6xx_gmu.c modificado")
-print("\nTodas las modificaciones aplicadas correctamente.")
+
+
+# ============================================================
+# Final verification
+# ============================================================
+
+print("\n============================================================")
+print(" Verificación final")
+print("============================================================")
+
+checks = [
+    (
+        cpufreq_file,
+        "bool tepuy_game_mode = false;",
+        "Tepuy GameMode CPU",
+    ),
+    (
+        cpufreq_file,
+        "Failed to add missing OPP freq=",
+        "CPU OPP fallback",
+    ),
+    (
+        adreno_file,
+        'of_machine_is_compatible("xiaomi,peridot")',
+        "Peridot GPU compatibility",
+    ),
+    (
+        adreno_file,
+        "1100000000UL",
+        "GPU 1100 MHz",
+    ),
+    (
+        gmu_file,
+        "Tepuy GameMode off, capping GPU perf index",
+        "GMU GameMode",
+    ),
+]
+
+for path, pattern, description in checks:
+
+    with open(path, "r", encoding="utf-8") as f:
+        text = f.read()
+
+    if pattern not in text:
+        fail(
+            f"Verificación fallida: {description}\n"
+            f"Archivo: {path}\n"
+            f"Patrón: {pattern}"
+        )
+
+    print(f"[OK] {description}")
+
+
+print("\n============================================================")
+print(" Todas las modificaciones aplicadas correctamente.")
+print("============================================================")
+print()
+print("Repo objetivo:")
+print("  peridot-dev/android_kernel_xiaomi_sm8635")
+print()
+print("Archivos modificados:")
+print("  certs/extract-cert.c")
+print("  drivers/cpufreq/qcom-cpufreq-hw.c")
+print("  drivers/gpu/drm/msm/adreno/adreno_gpu.c")
+print("  drivers/gpu/drm/msm/adreno/a6xx_gmu.c")
+print()
+print("Backups:")
+print("  *.tepuy.bak")
+print()
