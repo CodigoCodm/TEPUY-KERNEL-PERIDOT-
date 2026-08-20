@@ -1,4 +1,4 @@
-name: Build Tepuy Kernel for Poco F6 (peridot) with Full Modules
+name: Build Tepuy Kernel for Poco F6 (peridot) - Multi-Version
 
 on:
   workflow_dispatch:
@@ -8,6 +8,15 @@ on:
         required: true
         default: 'gki_defconfig'
         type: string
+      build_mode:
+        description: 'Build mode'
+        required: true
+        default: 'compat'
+        type: choice
+        options:
+          - compat
+          - full
+          - both
 
 env:
   ARCH: arm64
@@ -83,28 +92,17 @@ jobs:
           export USE_CCACHE=1
           export CCACHE_EXEC=/usr/bin/ccache
 
-          # Build defconfig
           make O=out ${{ github.event.inputs.defconfig }} 2>&1 | tee -a out/build.log
-
-          # Build kernel
           make O=out -j$(nproc --all) 2>&1 | tee -a out/build.log
-
-          # Build modules
           make O=out -j$(nproc --all) modules 2>&1 | tee -a out/build.log
-
-          # Install modules to staging
           make O=out INSTALL_MOD_PATH=$HOME/modules_staging INSTALL_MOD_STRIP=1 modules_install 2>&1 | tee -a out/build.log
 
           echo ""
-          echo "=== Build output files ==="
-          find out -name "Image*" -type f 2>/dev/null | while read f; do
-            echo "Found: $f ($(stat -c%s "$f" 2>/dev/null || echo 'unknown') bytes)"
-          done
-
+          echo "=== Kernel images ==="
+          find out -name "Image*" -type f 2>/dev/null
           echo ""
-          echo "=== Modules installed ==="
+          echo "=== Modules count ==="
           find $HOME/modules_staging -name "*.ko" | wc -l
-          find $HOME/modules_staging -name "*.ko" | head -30
 
       - name: Prepare kernel image
         run: |
@@ -112,43 +110,35 @@ jobs:
           KERNEL_IMAGE=""
           if [ -f "out/arch/arm64/boot/Image.gz-dtb" ]; then
             KERNEL_IMAGE="out/arch/arm64/boot/Image.gz-dtb"
-            echo "Found Image.gz-dtb"
           elif [ -f "out/arch/arm64/boot/Image.gz" ]; then
             KERNEL_IMAGE="out/arch/arm64/boot/Image.gz"
-            echo "Found Image.gz"
           elif [ -f "out/arch/arm64/boot/Image" ]; then
             KERNEL_IMAGE="out/arch/arm64/boot/Image"
-            echo "Found Image"
           fi
 
           if [ -z "$KERNEL_IMAGE" ]; then
             echo "ERROR: No kernel image found!"
-            ls -la out/arch/arm64/boot/ 2>/dev/null || echo "Directory not found"
             exit 1
           fi
 
           if [ "$KERNEL_IMAGE" != "out/arch/arm64/boot/Image.gz" ]; then
             cp "$KERNEL_IMAGE" out/arch/arm64/boot/Image.gz
-            echo "Copied kernel image to Image.gz"
           fi
 
       - name: Build tools for recovery (aarch64 static)
+        if: github.event.inputs.build_mode == 'full' || github.event.inputs.build_mode == 'both'
         run: |
           mkdir -p $HOME/tools
 
-          # --- 1. erofs-utils (mkfs.erofs, extract.erofs) ---
           echo "=== Building erofs-utils ==="
           git clone --depth=1 https://github.com/erofs/erofs-utils $HOME/erofs-utils
           cd $HOME/erofs-utils
           ./autogen.sh
           ./configure --host=aarch64-linux-gnu --prefix=$HOME/tools \
-              CC=aarch64-linux-gnu-gcc \
-              CFLAGS="-static -O2" LDFLAGS="-static"
+              CC=aarch64-linux-gnu-gcc CFLAGS="-static -O2" LDFLAGS="-static"
           make -j$(nproc)
           make install
-          ls -la $HOME/tools/bin/
 
-          # --- 2. e2fsprogs (resize2fs, e2fsck) ---
           echo "=== Building e2fsprogs ==="
           wget -q https://downloads.sourceforge.net/project/e2fsprogs/e2fsprogs/v1.47.0/e2fsprogs-1.47.0.tar.gz -O /tmp/e2fsprogs.tar.gz
           tar xzf /tmp/e2fsprogs.tar.gz -C $HOME
@@ -161,31 +151,18 @@ jobs:
               --disable-profile --disable-jbd-debug --disable-blkid-debug
           make -j$(nproc)
           make install
-          ls -la $HOME/tools/sbin/
 
-          # --- 3. p7zip (7za) ---
           echo "=== Building p7zip ==="
           git clone --depth=1 https://github.com/p7zip-project/p7zip $HOME/p7zip
           cd $HOME/p7zip
-          make -j$(nproc) CC=aarch64-linux-gnu-gcc CXX=aarch64-linux-gnu-g++ \
-              LDFLAGS="-static" 7za
+          make -j$(nproc) CC=aarch64-linux-gnu-gcc CXX=aarch64-linux-gnu-g++ LDFLAGS="-static" 7za
           cp bin/7za $HOME/tools/bin/7za
           chmod 755 $HOME/tools/bin/7za
-          file $HOME/tools/bin/7za
 
-          # --- 4. Verify all tools are aarch64 static ---
-          echo "=== Verifying tools ==="
-          for f in $HOME/tools/bin/* $HOME/tools/sbin/*; do
-            if [ -f "$f" ] && [ -x "$f" ]; then
-              echo -n "$f: "
-              file "$f"
-            fi
-          done
-
-      - name: Download Magisk tools (busybox, magiskboot, magiskpolicy)
+      - name: Download Magisk tools
+        if: github.event.inputs.build_mode == 'full' || github.event.inputs.build_mode == 'both'
         run: |
           mkdir -p $HOME/tools/bin
-          echo "=== Downloading Magisk APK ==="
           APK_URL=$(curl -sf https://api.github.com/repos/topjohnwu/Magisk/releases/latest \
             | jq -r '.assets[] | select(.name | test("^Magisk-v.*\\.apk$")) | .browser_download_url' \
             | head -n1)
@@ -195,76 +172,99 @@ jobs:
             exit 1
           fi
 
-          echo "APK: $APK_URL"
           curl -Lfo /tmp/magisk.apk "$APK_URL"
           unzip -o /tmp/magisk.apk -d /tmp/magisk_extract > /dev/null
 
-          echo "=== Extracting arm64 tools ==="
           cp /tmp/magisk_extract/lib/arm64-v8a/libbusybox.so $HOME/tools/bin/busybox
           cp /tmp/magisk_extract/lib/arm64-v8a/libmagiskboot.so $HOME/tools/bin/magiskboot
           cp /tmp/magisk_extract/lib/arm64-v8a/libmagiskpolicy.so $HOME/tools/bin/magiskpolicy
           chmod 755 $HOME/tools/bin/busybox $HOME/tools/bin/magiskboot $HOME/tools/bin/magiskpolicy
 
-          file $HOME/tools/bin/busybox
-          file $HOME/tools/bin/magiskboot
-          file $HOME/tools/bin/magiskpolicy
-
-      - name: Prepare AnyKernel3 with modules
+      - name: Build COMPAT zip (boot only, multi-version compatible)
+        if: github.event.inputs.build_mode == 'compat' || github.event.inputs.build_mode == 'both'
         run: |
           cd $HOME
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git
-          cd AnyKernel3
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3-compat
+          cd AnyKernel3-compat
 
-          # Copy our anykernel.sh
-          cp ${{ github.workspace }}/anykernel.sh ./anykernel.sh
-
-          # Copy kernel image
+          cp ${{ github.workspace }}/anykernel-compat.sh ./anykernel.sh
           cp $HOME/kernel-peridot/out/arch/arm64/boot/Image.gz ./Image.gz
 
-          # Copy DTB if exists
+          # DTB
           if [ -f "$HOME/kernel-peridot/out/arch/arm64/boot/dts/qcom/sm8635.dtb" ]; then
             cp $HOME/kernel-peridot/out/arch/arm64/boot/dts/qcom/sm8635.dtb ./dtb
-          elif [ -d "$HOME/kernel-peridot/out/arch/arm64/boot/dts/qcom" ]; then
-            DTB=$(find $HOME/kernel-peridot/out/arch/arm64/boot/dts/qcom -name "*.dtb" | head -1)
-            if [ -n "$DTB" ]; then
-              cp "$DTB" ./dtb
-            fi
+          else
+            DTB=$(find $HOME/kernel-peridot/out/arch/arm64/boot/dts -name "*.dtb" | head -1)
+            [ -n "$DTB" ] && cp "$DTB" ./dtb
           fi
 
-          # Prepare modules directories
-          mkdir -p _modules
-          mkdir -p _system_dlkm
+          # Download magiskboot for compat mode (needed for vbmeta patch)
+          mkdir -p tools
+          APK_URL=$(curl -sf https://api.github.com/repos/topjohnwu/Magisk/releases/latest \
+            | jq -r '.assets[] | select(.name | test("^Magisk-v.*\\.apk$")) | .browser_download_url' \
+            | head -n1)
+          curl -Lfo /tmp/magisk_compat.apk "$APK_URL" 2>/dev/null || true
+          if [ -f /tmp/magisk_compat.apk ]; then
+            unzip -o /tmp/magisk_compat.apk -d /tmp/magisk_compat > /dev/null
+            cp /tmp/magisk_compat/lib/arm64-v8a/libmagiskboot.so tools/magiskboot
+            cp /tmp/magisk_compat/lib/arm64-v8a/libbusybox.so tools/busybox
+            chmod 755 tools/magiskboot tools/busybox
+          fi
 
-          # Organize modules using our Python script
+          zip -r9 $HOME/Tepuy-Kernel-Compat-peridot.zip * -x "*.zip" "*.git*" "README*"
+          echo "COMPAT zip created"
+          ls -lh $HOME/Tepuy-Kernel-Compat-peridot.zip
+
+      - name: Build FULL zip (with modules, version-specific)
+        if: github.event.inputs.build_mode == 'full' || github.event.inputs.build_mode == 'both'
+        run: |
+          cd $HOME
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3-full
+          cd AnyKernel3-full
+
+          cp ${{ github.workspace }}/anykernel-full.sh ./anykernel.sh
+          cp $HOME/kernel-peridot/out/arch/arm64/boot/Image.gz ./Image.gz
+
+          # DTB
+          if [ -f "$HOME/kernel-peridot/out/arch/arm64/boot/dts/qcom/sm8635.dtb" ]; then
+            cp $HOME/kernel-peridot/out/arch/arm64/boot/dts/qcom/sm8635.dtb ./dtb
+          else
+            DTB=$(find $HOME/kernel-peridot/out/arch/arm64/boot/dts -name "*.dtb" | head -1)
+            [ -n "$DTB" ] && cp "$DTB" ./dtb
+          fi
+
+          # Modules
+          mkdir -p _modules _system_dlkm
           python3 ${{ github.workspace }}/prepare-modules.py \
             --input "$HOME/modules_staging" \
             --vendor-out "_modules" \
             --system-out "_system_dlkm"
 
-          echo ""
-          echo "=== Vendor modules ($(ls _modules/ 2>/dev/null | wc -l)) ==="
-          ls -la _modules/ 2>/dev/null | head -25
-
-          echo ""
-          echo "=== System modules ($(ls _system_dlkm/ 2>/dev/null | wc -l)) ==="
-          ls -la _system_dlkm/ 2>/dev/null | head -15
-
-          # Copy tools
+          # Tools
           mkdir -p tools
           cp -r $HOME/tools/bin/* tools/ 2>/dev/null || true
           cp -r $HOME/tools/sbin/* tools/ 2>/dev/null || true
-
-          # Make all tools executable
           chmod -R 755 tools/
 
-          echo ""
-          echo "=== Tools included ==="
-          ls -la tools/ | head -30
+          zip -r9 $HOME/Tepuy-Kernel-Full-peridot.zip * -x "*.zip" "*.git*" "README*"
+          echo "FULL zip created"
+          ls -lh $HOME/Tepuy-Kernel-Full-peridot.zip
 
-          # Create zip
-          zip -r9 $HOME/Tepuy-GameMode-peridot.zip * -x "*.zip" "*.git*" "README*"
-          echo "AnyKernel3 zip created"
-          ls -lh $HOME/Tepuy-GameMode-peridot.zip
+      - name: Upload COMPAT zip
+        if: github.event.inputs.build_mode == 'compat' || github.event.inputs.build_mode == 'both'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tepuy-Kernel-Compat-peridot
+          path: ~/Tepuy-Kernel-Compat-peridot.zip
+          retention-days: 30
+
+      - name: Upload FULL zip
+        if: github.event.inputs.build_mode == 'full' || github.event.inputs.build_mode == 'both'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tepuy-Kernel-Full-peridot
+          path: ~/Tepuy-Kernel-Full-peridot.zip
+          retention-days: 30
 
       - name: Upload kernel image
         uses: actions/upload-artifact@v4
@@ -276,13 +276,6 @@ jobs:
             ~/kernel-peridot/out/arch/arm64/boot/Image
           retention-days: 30
           if-no-files-found: ignore
-
-      - name: Upload AnyKernel3 zip
-        uses: actions/upload-artifact@v4
-        with:
-          name: Tepuy-GameMode-peridot
-          path: ~/Tepuy-GameMode-peridot.zip
-          retention-days: 30
 
       - name: Upload build log (if failed)
         if: failure()
