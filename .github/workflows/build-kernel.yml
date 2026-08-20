@@ -32,7 +32,13 @@ jobs:
           DEBIAN_PRIORITY: critical
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends             git bc bison flex libssl-dev make             gcc-aarch64-linux-gnu clang llvm lld             device-tree-compiler python3 zip unzip             wget ccache libelf-dev libncurses-dev             libxml2-utils gcc-arm-linux-gnueabi
+          sudo apt-get install -y -qq --no-install-recommends \
+            git bc bison flex libssl-dev make \
+            gcc-aarch64-linux-gnu clang llvm lld \
+            device-tree-compiler python3 zip unzip \
+            wget ccache libelf-dev libncurses-dev \
+            libxml2-utils gcc-arm-linux-gnueabi \
+            dwarves
 
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2
@@ -47,7 +53,9 @@ jobs:
 
       - name: Clone LineageOS kernel for peridot
         run: |
-          git clone --depth=1 -b lineage-23.2             https://github.com/LineageOS/android_kernel_xiaomi_sm8635             $HOME/kernel-peridot
+          git clone --depth=1 -b lineage-23.2 \
+            https://github.com/LineageOS/android_kernel_xiaomi_sm8635 \
+            $HOME/kernel-peridot
 
       - name: List available defconfigs
         run: |
