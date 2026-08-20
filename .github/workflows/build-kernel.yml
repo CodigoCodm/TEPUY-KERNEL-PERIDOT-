@@ -55,13 +55,23 @@ jobs:
         run: |
           git clone --depth=1 -b lineage-23.2             https://github.com/LineageOS/android_kernel_xiaomi_sm8635             $HOME/kernel-peridot
 
-      - name: Apply Tepuy GameMode patch
+      - name: Apply Tepuy GameMode patches
         run: |
           cd $HOME/kernel-peridot
-          cp ${{ github.workspace }}/tepuy-gamemode.patch .
-          git apply --whitespace=nowarn tepuy-gamemode.patch
-          echo "Patch applied successfully"
+
+          # Aplicar parches individuales con patch -p1 (más permisivo que git apply)
+          for p in 01-cpufreq.patch 02-adreno.patch 03-gmu.patch; do
+            echo "=== Applying $p ==="
+            cp ${{ github.workspace }}/$p .
+            patch -p1 < $p || git apply $p
+            echo "$p applied successfully"
+          done
+
+          echo ""
+          echo "=== Verifying patches ==="
           grep -n "tepuy_game_mode" drivers/cpufreq/qcom-cpufreq-hw.c | head -5
+          grep -n "tepuy_game_mode" drivers/gpu/drm/msm/adreno/adreno_gpu.c | head -3
+          grep -n "tepuy_game_mode" drivers/gpu/drm/msm/adreno/a6xx_gmu.c | head -3
 
       - name: Build kernel
         run: |
