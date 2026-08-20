@@ -44,12 +44,6 @@ jobs:
         run: |
           echo "System Clang version:"
           clang --version
-          echo ""
-          echo "LLVM tools:"
-          llvm-ar --version
-          llvm-nm --version
-          llvm-objcopy --version
-          llvm-strip --version
 
       - name: Clone LineageOS kernel for peridot
         run: |
@@ -58,10 +52,7 @@ jobs:
       - name: List available defconfigs
         run: |
           echo "=== Defconfigs disponibles ==="
-          ls $HOME/kernel-peridot/arch/arm64/configs/ || echo "No hay archivos en arch/arm64/configs/"
-          echo ""
-          echo "=== Build configs ==="
-          ls $HOME/kernel-peridot/build.config* 2>/dev/null || true
+          ls $HOME/kernel-peridot/arch/arm64/configs/ 2>/dev/null || echo "No hay archivos en arch/arm64/configs/"
 
       - name: Apply Tepuy GameMode patches (Python)
         run: |
@@ -95,11 +86,34 @@ jobs:
           make O=out ${{ github.event.inputs.defconfig }} 2>&1 | tee -a out/build.log
           make -j$(nproc --all) O=out 2>&1 | tee -a out/build.log
 
-          for f in Image Image.gz Image.gz-dtb; do
-            if [ -f "out/arch/arm64/boot/$f" ]; then
-              echo "Found: $f"
-            fi
+          echo ""
+          echo "=== Build output files ==="
+          find out -name "Image*" -type f 2>/dev/null | while read f; do
+            echo "Found: $f ($(stat -c%s "$f") bytes)"
           done
+
+          echo ""
+          echo "=== arch/arm64/boot contents ==="
+          ls -la out/arch/arm64/boot/ 2>/dev/null || echo "Directory does not exist"
+
+      - name: Compress kernel image if needed
+        run: |
+          cd $HOME/kernel-peridot
+
+          # Si no hay Image.gz pero hay Image, comprimirlo
+          if [ ! -f "out/arch/arm64/boot/Image.gz" ] && [ -f "out/arch/arm64/boot/Image" ]; then
+            echo "Compressing Image -> Image.gz"
+            gzip -c out/arch/arm64/boot/Image > out/arch/arm64/boot/Image.gz
+          fi
+
+          # Si hay Image.gz-dtb, renombrarlo
+          if [ -f "out/arch/arm64/boot/Image.gz-dtb" ] && [ ! -f "out/arch/arm64/boot/Image.gz" ]; then
+            echo "Found Image.gz-dtb, copying to Image.gz"
+            cp out/arch/arm64/boot/Image.gz-dtb out/arch/arm64/boot/Image.gz
+          fi
+
+          echo "=== Final boot files ==="
+          ls -la out/arch/arm64/boot/ 2>/dev/null || echo "No boot directory"
 
       - name: Prepare AnyKernel3
         run: |
@@ -108,11 +122,16 @@ jobs:
           cd AnyKernel3
           cp ${{ github.workspace }}/anykernel.sh ./anykernel.sh
 
-          # Detectar que imagen genero el build
+          # Copiar la imagen del kernel
           if [ -f "$HOME/kernel-peridot/out/arch/arm64/boot/Image.gz" ]; then
             cp $HOME/kernel-peridot/out/arch/arm64/boot/Image.gz ./Image.gz
+            echo "Copied Image.gz"
           elif [ -f "$HOME/kernel-peridot/out/arch/arm64/boot/Image" ]; then
             cp $HOME/kernel-peridot/out/arch/arm64/boot/Image ./Image
+            echo "Copied Image"
+          else
+            echo "ERROR: No kernel image found!"
+            exit 1
           fi
 
           zip -r9 $HOME/Tepuy-GameMode-peridot.zip * -x "*.zip" "*.git*" "README*"
