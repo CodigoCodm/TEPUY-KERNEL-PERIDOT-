@@ -1,0 +1,33 @@
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+@@ -30,6 +30,8 @@
+ #include "msm_gem.h"
+ #include "msm_mmu.h"
+
++extern bool tepuy_game_mode;
++
+ #define GPU_HW_ACK_TIMEOUT_MS 100
+ /*
+  * These are the different values for the lowest cache
+@@ -117,10 +119,25 @@ static void a6xx_gmu_set_freq(struct msm_gpu *gpu, struct dev_pm_opp *opp,
+ 	if (gpu_freq == gmu->freq)
+ 		return;
+
+-	for (perf_index = 0; perf_index < gmu->nr_gpu_freqs - 1; perf_index++)
++	for (perf_index = 0; perf_index < gmu->nr_gpu_freqs; perf_index++)
+ 		if (gpu_freq == gmu->gpu_freqs[perf_index])
+ 			break;
+
++	if (perf_index == gmu->nr_gpu_freqs) {
++		DRM_DEV_ERROR(gmu->dev, "GPU frequency %lu Hz is not in the GMU table\n",
++			      gpu_freq);
++		return;
++	}
++
++	if (!tepuy_game_mode && perf_index == gmu->nr_gpu_freqs - 1) {
++		DRM_DEV_DEBUG(gmu->dev, "Tepuy GameMode off, capping GPU perf index\n");
++		perf_index = gmu->nr_gpu_freqs - 2;
++	}
++
+ 	gmu->current_perf_index = perf_index;
+ 	gmu->freq = gmu->gpu_freqs[perf_index];

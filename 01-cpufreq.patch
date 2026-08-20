@@ -1,0 +1,115 @@
+--- a/drivers/cpufreq/qcom-cpufreq-hw.c
++++ b/drivers/cpufreq/qcom-cpufreq-hw.c
+@@ -12,6 +12,8 @@
+ #include <linux/kernel.h>
+ #include <linux/module.h>
+ #include <linux/of_address.h>
++#include <linux/of.h>
++#include <linux/kobject.h>
+ #include <linux/of_platform.h>
+ #include <linux/pm_opp.h>
+ #include <linux/slab.h>
+@@ -24,6 +26,56 @@
+ #include <linux/units.h>
+ #include <soc/qcom/cpufreq.h>
+
++/* ========================================================================
++ * Tepuy GameMode
++ * ======================================================================== */
++
++bool tepuy_game_mode = false;
++EXPORT_SYMBOL_GPL(tepuy_game_mode);
++
++static ssize_t game_mode_show(struct kobject *kobj, struct kobj_attribute *attr,
++		      char *buf)
++{
++	return sprintf(buf, "%u\n", tepuy_game_mode);
++}
++
++static ssize_t game_mode_store(struct kobject *kobj, struct kobj_attribute *attr,
++		       const char *buf, size_t count)
++{
++	unsigned int val;
++	
++	if (kstrtouint(buf, 10, &val))
++		return -EINVAL;
++	tepuy_game_mode = !!val;
++	pr_info("Tepuy GameMode: %s\n", tepuy_game_mode ? "ON" : "OFF");
++	return count;
++}
++
++static struct kobj_attribute game_mode_attr = __ATTR(game_mode, 0666,
++			     game_mode_show, game_mode_store);
++
++static struct attribute *tepuy_boost_attrs[] = {
++	&game_mode_attr.attr,
++	NULL,
++};
++
++static struct attribute_group tepuy_boost_attr_group = {
++	.attrs = tepuy_boost_attrs,
++};
++
++static int __init tepuy_boost_init(void)
++{
++	struct kobject *tepuy_boost_kobj;
++
++	tepuy_boost_kobj = kobject_create_and_add("tepuy_boost", kernel_kobj);
++	if (!tepuy_boost_kobj)
++		return -ENOMEM;
++
++	if (sysfs_create_group(tepuy_boost_kobj, &tepuy_boost_attr_group))
++		pr_err("Tepuy GameMode: failed to create sysfs group\n");
++
++	return 0;
++}
++late_initcall(tepuy_boost_init);
++
++/* ======================================================================== */
++
+ struct qcom_cpufreq_data {
+ 	void __iomem *base;
+ 	void __iomem *aux_base;
+@@ -139,11 +191,32 @@ static int qcom_cpufreq_hw_target_index(struct cpufreq_policy *policy,
+
+ 	ret = dev_pm_opp_adjust_voltage(cpu_dev, freq_hz, volt, volt, volt);
+ 	if (ret) {
+-		dev_err(cpu_dev, "Voltage update failed freq=%ld\n", freq_khz);
++		struct dev_pm_opp *opp;
++		if (!tepuy_game_mode)
++			return ret;
++		opp = dev_pm_opp_add(cpu_dev, freq_hz, volt);
++		if (!IS_ERR(opp)) {
++			dev_pm_opp_put(opp);
++			return 0;
++		}
++		if (PTR_ERR(opp) != -EEXIST)
++			dev_err(cpu_dev, "Failed to add missing OPP freq=%ld: %ld\n", freq_khz, PTR_ERR(opp));
++		else
++			return 0;
++
++		dev_err(cpu_dev, "Voltage/OPP update failed freq=%ld\n", freq_khz);
+ 		return ret;
+ 	}
+
+-	return dev_pm_opp_enable(cpu_dev, freq_hz);
++	ret = dev_pm_opp_enable(cpu_dev, freq_hz);
++	if (ret == -ENODEV || ret == -ENOENT) {
++		struct dev_pm_opp *opp;
++		if (!tepuy_game_mode)
++			return ret;
++		opp = dev_pm_opp_add(cpu_dev, freq_hz, volt);
++		if (!IS_ERR(opp)) {
++			dev_pm_opp_put(opp);
++			ret = 0;
++		} else if (PTR_ERR(opp) == -EEXIST) {
++			ret = 0;
++		} else {
++			ret = PTR_ERR(opp);
++		}
++	}
++
++	return ret;
+ }
+
+ u64 qcom_cpufreq_get_cpu_cycle_counter(int cpu)
