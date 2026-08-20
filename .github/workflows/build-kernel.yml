@@ -1,10 +1,10 @@
-name: Build Tepuy Kernel for Poco F6 (peridot) - Multi-Version
+name: Build Tepuy Kernel for Poco F6 (peridot)
 
-on:
+'on':
   workflow_dispatch:
     inputs:
       defconfig:
-        description: 'Defconfig to use (default: gki_defconfig)'
+        description: 'Defconfig to use'
         required: true
         default: 'gki_defconfig'
         type: string
@@ -40,13 +40,7 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends \
-            git bc bison flex libssl-dev make \
-            gcc-aarch64-linux-gnu clang llvm lld \
-            device-tree-compiler python3 zip unzip \
-            wget ccache libelf-dev libncurses-dev \
-            libxml2-utils gcc-arm-linux-gnueabi \
-            dwarves jq
+          sudo apt-get install -y -qq --no-install-recommends             git bc bison flex libssl-dev make             gcc-aarch64-linux-gnu clang llvm lld             device-tree-compiler python3 zip unzip             wget ccache libelf-dev libncurses-dev             libxml2-utils gcc-arm-linux-gnueabi             dwarves jq
 
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2
@@ -56,11 +50,9 @@ jobs:
 
       - name: Clone LineageOS kernel for peridot
         run: |
-          git clone --depth=1 -b lineage-23.2 \
-            https://github.com/LineageOS/android_kernel_xiaomi_sm8635 \
-            $HOME/kernel-peridot
+          git clone --depth=1 -b lineage-23.2             https://github.com/LineageOS/android_kernel_xiaomi_sm8635             $HOME/kernel-peridot
 
-      - name: Apply Tepuy GameMode patches (COMPAT - KMI-safe)
+      - name: Apply Tepuy GameMode patches (COMPAT)
         if: github.event.inputs.build_mode == 'compat' || github.event.inputs.build_mode == 'both'
         run: |
           cd $HOME/kernel-peridot
@@ -70,10 +62,9 @@ jobs:
           grep -n "tepuy_game_mode" kernel/tepuy_sysfs.c 2>/dev/null | head -5
           grep -n "tepuy_game_mode" drivers/thermal/thermal_core.c 2>/dev/null | head -3
           grep -n "tepuy_game_mode" drivers/cpufreq/cpufreq.c 2>/dev/null | head -3
-          grep -n "tepuy_game_mode" kernel/sched/cpufreq_schedutil.c 2>/dev/null | head -3 || \
-            grep -n "tepuy_game_mode" kernel/sched/schedutil.c 2>/dev/null | head -3 || true
+          grep -n "tepuy_game_mode" kernel/sched/cpufreq_schedutil.c 2>/dev/null | head -3 ||             grep -n "tepuy_game_mode" kernel/sched/schedutil.c 2>/dev/null | head -3 || true
 
-      - name: Apply Tepuy GameMode patches (FULL - vendor drivers)
+      - name: Apply Tepuy GameMode patches (FULL)
         if: github.event.inputs.build_mode == 'full'
         run: |
           cd $HOME/kernel-peridot
@@ -138,7 +129,7 @@ jobs:
             cp "$KERNEL_IMAGE" out/arch/arm64/boot/Image.gz
           fi
 
-      - name: Build COMPAT zip (boot only, multi-version compatible)
+      - name: Build COMPAT zip
         if: github.event.inputs.build_mode == 'compat' || github.event.inputs.build_mode == 'both'
         run: |
           cd $HOME
@@ -148,7 +139,6 @@ jobs:
           cp ${{ github.workspace }}/anykernel-compat.sh ./anykernel.sh
           cp $HOME/kernel-peridot/out/arch/arm64/boot/Image.gz ./Image.gz
 
-          # DTB
           if [ -f "$HOME/kernel-peridot/out/arch/arm64/boot/dts/qcom/sm8635.dtb" ]; then
             cp $HOME/kernel-peridot/out/arch/arm64/boot/dts/qcom/sm8635.dtb ./dtb
           else
@@ -156,18 +146,14 @@ jobs:
             [ -n "$DTB" ] && cp "$DTB" ./dtb
           fi
 
-          # Copy tools from repo (RealKing tools) if available
           mkdir -p tools
           if [ -d "${{ github.workspace }}/tools" ]; then
-            echo "=== Using tools from repo (RealKing) ==="
+            echo "=== Using tools from repo ==="
             cp -r ${{ github.workspace }}/tools/* tools/ 2>/dev/null || true
             chmod -R 755 tools/
           fi
 
-          # Always download magiskboot/busybox for vbmeta patch (COMPAT needs this)
-          APK_URL=$(curl -sf https://api.github.com/repos/topjohnwu/Magisk/releases/latest \
-            | jq -r '.assets[] | select(.name | test("^Magisk-v.*\\.apk$")) | .browser_download_url' \
-            | head -n1)
+          APK_URL=$(curl -sf https://api.github.com/repos/topjohnwu/Magisk/releases/latest             | jq -r '.assets[] | select(.name | test("^Magisk-v.*\.apk$")) | .browser_download_url'             | head -n1)
           if [ -n "$APK_URL" ] && [ "$APK_URL" != "null" ]; then
             curl -Lfo /tmp/magisk_compat.apk "$APK_URL" 2>/dev/null || true
             if [ -f /tmp/magisk_compat.apk ]; then
@@ -178,7 +164,6 @@ jobs:
             fi
           fi
 
-          # If repo has ak3-core.sh (RealKing modified), use it
           if [ -f "${{ github.workspace }}/tools/ak3-core.sh" ]; then
             echo "=== Using ak3-core.sh from RealKing ==="
             cp ${{ github.workspace }}/tools/ak3-core.sh tools/ak3-core.sh
@@ -191,7 +176,7 @@ jobs:
           echo "COMPAT zip created"
           ls -lh $HOME/Tepuy-Kernel-Compat-peridot.zip
 
-      - name: Build FULL zip (with modules, version-specific)
+      - name: Build FULL zip
         if: github.event.inputs.build_mode == 'full' || github.event.inputs.build_mode == 'both'
         run: |
           cd $HOME
@@ -201,7 +186,6 @@ jobs:
           cp ${{ github.workspace }}/anykernel-full.sh ./anykernel.sh
           cp $HOME/kernel-peridot/out/arch/arm64/boot/Image.gz ./Image.gz
 
-          # DTB
           if [ -f "$HOME/kernel-peridot/out/arch/arm64/boot/dts/qcom/sm8635.dtb" ]; then
             cp $HOME/kernel-peridot/out/arch/arm64/boot/dts/qcom/sm8635.dtb ./dtb
           else
@@ -209,14 +193,9 @@ jobs:
             [ -n "$DTB" ] && cp "$DTB" ./dtb
           fi
 
-          # Modules
           mkdir -p _modules _system_dlkm
-          python3 ${{ github.workspace }}/prepare-modules.py \
-            --input "$HOME/modules_staging" \
-            --vendor-out "_modules" \
-            --system-out "_system_dlkm"
+          python3 ${{ github.workspace }}/prepare-modules.py             --input "$HOME/modules_staging"             --vendor-out "_modules"             --system-out "_system_dlkm"
 
-          # Copy ALL tools from repo (RealKing tools - REQUIRED for FULL)
           mkdir -p tools
           if [ -d "${{ github.workspace }}/tools" ]; then
             echo "=== Using ALL tools from repo (RealKing) ==="
@@ -227,11 +206,9 @@ jobs:
           else
             echo "ERROR: tools/ directory not found in repo!"
             echo "FULL mode requires tools from RealKing zip."
-            echo "Please extract tools/ from RealKing and upload to your repo."
             exit 1
           fi
 
-          # If repo has ak3-core.sh (RealKing modified), use it
           if [ -f "${{ github.workspace }}/tools/ak3-core.sh" ]; then
             echo "=== Using ak3-core.sh from RealKing ==="
             cp ${{ github.workspace }}/tools/ak3-core.sh tools/ak3-core.sh
@@ -246,56 +223,49 @@ jobs:
         run: |
           mkdir -p $HOME/gamemode-module
           cd $HOME/gamemode-module
-
-          cat > module.prop << 'EOF'
-id=tepuy-gamemode-auto
-name=Tepuy GameMode Auto-Activator
-version=1.0
-versionCode=1
-author=CodigoCodm
-description=Activa automaticamente Tepuy GameMode al arrancar. Requiere kernel Tepuy. Compatible Magisk/KernelSU.
-EOF
-
-          cat > service.sh << 'EOF'
-#!/system/bin/sh
-LOG_FILE="/data/local/tmp/tepuy-gamemode.log"
-SYSFS_NODE="/sys/kernel/tepuy_boost/game_mode"
-MAX_WAIT=30
-
-log_msg() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
-}
-
-rm -f "$LOG_FILE"
-log_msg "=== Tepuy GameMode Auto-Activator iniciado ==="
-log_msg "Esperando sysfs node..."
-
-waited=0
-while [ ! -f "$SYSFS_NODE" ]; do
-    sleep 1
-    waited=$((waited + 1))
-    if [ $waited -ge $MAX_WAIT ]; then
-        log_msg "ERROR: sysfs node no aparecio despues de ${MAX_WAIT}s"
-        log_msg "Kernel Tepuy no detectado."
-        exit 1
-    fi
-done
-
-log_msg "sysfs node encontrado despues de ${waited}s"
-current=$(cat "$SYSFS_NODE" 2>/dev/null)
-log_msg "Estado actual: $current"
-
-if echo 1 > "$SYSFS_NODE" 2>/dev/null; then
-    new_state=$(cat "$SYSFS_NODE" 2>/dev/null)
-    log_msg "SUCCESS: GameMode activado. Estado: $new_state"
-else
-    log_msg "ERROR: No se pudo escribir en sysfs."
-    exit 1
-fi
-
-log_msg "=== Activacion completada ==="
-EOF
-
+          echo "id=tepuy-gamemode-auto" > module.prop
+          echo "name=Tepuy GameMode Auto-Activator" >> module.prop
+          echo "version=1.0" >> module.prop
+          echo "versionCode=1" >> module.prop
+          echo "author=CodigoCodm" >> module.prop
+          echo "description=Activa automaticamente Tepuy GameMode al arrancar. Requiere kernel Tepuy." >> module.prop
+          echo "#!/system/bin/sh" > service.sh
+          echo 'LOG_FILE="/data/local/tmp/tepuy-gamemode.log"' >> service.sh
+          echo 'SYSFS_NODE="/sys/kernel/tepuy_boost/game_mode"' >> service.sh
+          echo 'MAX_WAIT=30' >> service.sh
+          echo '' >> service.sh
+          echo 'log_msg() {' >> service.sh
+          echo '    echo "[$(date "+%Y-%m-%d %H:%M:%S")] $1" >> "$LOG_FILE"' >> service.sh
+          echo '}' >> service.sh
+          echo '' >> service.sh
+          echo 'rm -f "$LOG_FILE"' >> service.sh
+          echo 'log_msg "=== Tepuy GameMode Auto-Activator iniciado ==="' >> service.sh
+          echo 'log_msg "Esperando sysfs node..."' >> service.sh
+          echo '' >> service.sh
+          echo 'waited=0' >> service.sh
+          echo 'while [ ! -f "$SYSFS_NODE" ]; do' >> service.sh
+          echo '    sleep 1' >> service.sh
+          echo '    waited=$((waited + 1))' >> service.sh
+          echo '    if [ $waited -ge $MAX_WAIT ]; then' >> service.sh
+          echo '        log_msg "ERROR: sysfs node no aparecio despues de ${MAX_WAIT}s"' >> service.sh
+          echo '        log_msg "Kernel Tepuy no detectado."' >> service.sh
+          echo '        exit 1' >> service.sh
+          echo '    fi' >> service.sh
+          echo 'done' >> service.sh
+          echo '' >> service.sh
+          echo 'log_msg "sysfs node encontrado despues de ${waited}s"' >> service.sh
+          echo 'current=$(cat "$SYSFS_NODE" 2>/dev/null)' >> service.sh
+          echo 'log_msg "Estado actual: $current"' >> service.sh
+          echo '' >> service.sh
+          echo 'if echo 1 > "$SYSFS_NODE" 2>/dev/null; then' >> service.sh
+          echo '    new_state=$(cat "$SYSFS_NODE" 2>/dev/null)' >> service.sh
+          echo '    log_msg "SUCCESS: GameMode activado. Estado: $new_state"' >> service.sh
+          echo 'else' >> service.sh
+          echo '    log_msg "ERROR: No se pudo escribir en sysfs."' >> service.sh
+          echo '    exit 1' >> service.sh
+          echo 'fi' >> service.sh
+          echo '' >> service.sh
+          echo 'log_msg "=== Activacion completada ==="' >> service.sh
           zip -r9 $HOME/Tepuy-GameMode-AutoActivator.zip module.prop service.sh
           echo "GameMode Auto-Activator module created"
           ls -lh $HOME/Tepuy-GameMode-AutoActivator.zip
@@ -316,7 +286,7 @@ EOF
           path: ~/Tepuy-Kernel-Full-peridot.zip
           retention-days: 30
 
-      - name: Upload GameMode Auto-Activator module
+      - name: Upload GameMode Auto-Activator
         if: github.event.inputs.build_mode == 'compat' || github.event.inputs.build_mode == 'both'
         uses: actions/upload-artifact@v4
         with:
@@ -335,7 +305,7 @@ EOF
           retention-days: 30
           if-no-files-found: ignore
 
-      - name: Upload build log (if failed)
+      - name: Upload build log if failed
         if: failure()
         uses: actions/upload-artifact@v4
         with:
