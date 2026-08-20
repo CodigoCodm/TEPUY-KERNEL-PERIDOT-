@@ -53,6 +53,10 @@ jobs:
         run: |
           echo "=== Defconfigs disponibles ==="
           ls $HOME/kernel-peridot/arch/arm64/configs/ 2>/dev/null || echo "No hay archivos en arch/arm64/configs/"
+          echo ""
+          echo "=== Archivos de config en raiz ==="
+          ls $HOME/kernel-peridot/*.config 2>/dev/null || true
+          ls $HOME/kernel-peridot/build.config* 2>/dev/null || true
 
       - name: Apply Tepuy GameMode patches (Python)
         run: |
@@ -69,8 +73,10 @@ jobs:
           cd $HOME/kernel-peridot
           mkdir -p out
 
+          export ARCH=arm64
+          export SUBARCH=arm64
           export CC="clang"
-          export CXX="clang++"
+          export CLANG_TRIPLE="aarch64-linux-gnu-"
           export CROSS_COMPILE="aarch64-linux-gnu-"
           export CROSS_COMPILE_ARM32="arm-linux-gnueabi-"
           export AR="llvm-ar"
@@ -83,37 +89,49 @@ jobs:
           export USE_CCACHE=1
           export CCACHE_EXEC=/usr/bin/ccache
 
+          # Compilar defconfig
           make O=out ${{ github.event.inputs.defconfig }} 2>&1 | tee -a out/build.log
-          make -j$(nproc --all) O=out 2>&1 | tee -a out/build.log
+
+          # Compilar kernel
+          make O=out -j$(nproc --all) 2>&1 | tee -a out/build.log
 
           echo ""
           echo "=== Build output files ==="
           find out -name "Image*" -type f 2>/dev/null | while read f; do
-            echo "Found: $f ($(stat -c%s "$f") bytes)"
+            echo "Found: $f ($(stat -c%s "$f" 2>/dev/null || echo 'unknown') bytes)"
           done
 
           echo ""
           echo "=== arch/arm64/boot contents ==="
           ls -la out/arch/arm64/boot/ 2>/dev/null || echo "Directory does not exist"
 
-      - name: Compress kernel image if needed
+      - name: Prepare kernel image for AnyKernel3
         run: |
           cd $HOME/kernel-peridot
 
-          # Si no hay Image.gz pero hay Image, comprimirlo
-          if [ ! -f "out/arch/arm64/boot/Image.gz" ] && [ -f "out/arch/arm64/boot/Image" ]; then
-            echo "Compressing Image -> Image.gz"
-            gzip -c out/arch/arm64/boot/Image > out/arch/arm64/boot/Image.gz
+          # Buscar la imagen del kernel generada
+          KERNEL_IMAGE=""
+          if [ -f "out/arch/arm64/boot/Image.gz-dtb" ]; then
+            KERNEL_IMAGE="out/arch/arm64/boot/Image.gz-dtb"
+            echo "Found Image.gz-dtb"
+          elif [ -f "out/arch/arm64/boot/Image.gz" ]; then
+            KERNEL_IMAGE="out/arch/arm64/boot/Image.gz"
+            echo "Found Image.gz"
+          elif [ -f "out/arch/arm64/boot/Image" ]; then
+            KERNEL_IMAGE="out/arch/arm64/boot/Image"
+            echo "Found Image"
           fi
 
-          # Si hay Image.gz-dtb, renombrarlo
-          if [ -f "out/arch/arm64/boot/Image.gz-dtb" ] && [ ! -f "out/arch/arm64/boot/Image.gz" ]; then
-            echo "Found Image.gz-dtb, copying to Image.gz"
-            cp out/arch/arm64/boot/Image.gz-dtb out/arch/arm64/boot/Image.gz
+          if [ -z "$KERNEL_IMAGE" ]; then
+            echo "ERROR: No kernel image found!"
+            echo "Contents of out/arch/arm64/boot/:"
+            ls -la out/arch/arm64/boot/ 2>/dev/null || echo "Directory not found"
+            exit 1
           fi
 
-          echo "=== Final boot files ==="
-          ls -la out/arch/arm64/boot/ 2>/dev/null || echo "No boot directory"
+          # Copiar como Image.gz para AnyKernel3
+          cp "$KERNEL_IMAGE" out/arch/arm64/boot/Image.gz
+          echo "Copied kernel image to Image.gz"
 
       - name: Prepare AnyKernel3
         run: |
@@ -121,19 +139,7 @@ jobs:
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git
           cd AnyKernel3
           cp ${{ github.workspace }}/anykernel.sh ./anykernel.sh
-
-          # Copiar la imagen del kernel
-          if [ -f "$HOME/kernel-peridot/out/arch/arm64/boot/Image.gz" ]; then
-            cp $HOME/kernel-peridot/out/arch/arm64/boot/Image.gz ./Image.gz
-            echo "Copied Image.gz"
-          elif [ -f "$HOME/kernel-peridot/out/arch/arm64/boot/Image" ]; then
-            cp $HOME/kernel-peridot/out/arch/arm64/boot/Image ./Image
-            echo "Copied Image"
-          else
-            echo "ERROR: No kernel image found!"
-            exit 1
-          fi
-
+          cp $HOME/kernel-peridot/out/arch/arm64/boot/Image.gz ./Image.gz
           zip -r9 $HOME/Tepuy-GameMode-peridot.zip * -x "*.zip" "*.git*" "README*"
           echo "AnyKernel3 zip created"
           ls -lh $HOME/Tepuy-GameMode-peridot.zip
@@ -144,6 +150,7 @@ jobs:
           name: kernel-image
           path: |
             ~/kernel-peridot/out/arch/arm64/boot/Image.gz
+            ~/kernel-peridot/out/arch/arm64/boot/Image.gz-dtb
             ~/kernel-peridot/out/arch/arm64/boot/Image
           retention-days: 30
           if-no-files-found: ignore
