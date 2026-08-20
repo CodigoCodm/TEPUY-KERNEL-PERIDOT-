@@ -27,9 +27,12 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup build environment
+        env:
+          DEBIAN_FRONTEND: noninteractive
+          DEBIAN_PRIORITY: critical
         run: |
-          sudo apt-get update
-          sudo apt-get install -y git bc bison flex libssl-dev make gcc-aarch64-linux-gnu clang llvm lld device-tree-compiler python3 zip unzip wget ccache libelf-dev libncurses5-dev libxml2-utils
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends             git bc bison flex libssl-dev make             gcc-aarch64-linux-gnu clang llvm lld             device-tree-compiler python3 zip unzip             wget ccache libelf-dev libncurses-dev             libxml2-utils gcc-arm-linux-gnueabi
 
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2
@@ -41,16 +44,24 @@ jobs:
         run: |
           mkdir -p $HOME/toolchains
           cd $HOME/toolchains
-          wget -q --show-progress "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r530567.tar.gz" -O clang.tar.gz
-          mkdir -p clang-r530567
-          tar -xzf clang.tar.gz -C clang-r530567 --strip-components=1
-          rm clang.tar.gz
+
+          # Método confiable: git sparse-checkout para descargar solo clang-r530567
+          git clone --depth=1 --filter=blob:none --sparse             https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86             clang-repo
+          cd clang-repo
+          git sparse-checkout set clang-r530567
+
+          # Mover el toolchain a la ubicación esperada
+          mv clang-r530567 $HOME/toolchains/clang-r530567
+          cd $HOME/toolchains
+          rm -rf clang-repo
+
           echo "Clang downloaded successfully"
+          ls -la $HOME/toolchains/clang-r530567/bin/
           $HOME/toolchains/clang-r530567/bin/clang --version
 
       - name: Clone LineageOS kernel for peridot
         run: |
-          git clone --depth=1 -b lineage-23.2 https://github.com/LineageOS/android_kernel_xiaomi_sm8635 $HOME/kernel-peridot
+          git clone --depth=1 -b lineage-23.2             https://github.com/LineageOS/android_kernel_xiaomi_sm8635             $HOME/kernel-peridot
 
       - name: Apply Tepuy GameMode patch
         run: |
@@ -76,8 +87,10 @@ jobs:
           export LLVM_IAS=1
           export USE_CCACHE=1
           export CCACHE_EXEC=/usr/bin/ccache
-          make O=out ${{ github.event.inputs.defconfig }}
-          make -j$(nproc --all) O=out
+
+          make O=out ${{ github.event.inputs.defconfig }} 2>&1 | tee -a out/build.log
+          make -j$(nproc --all) O=out 2>&1 | tee -a out/build.log
+
           echo "Build completed"
           ls -lh out/arch/arm64/boot/
 
