@@ -152,6 +152,40 @@ jobs:
           cd AnyKernel3
           cp ${{ github.workspace }}/anykernel.sh ./anykernel.sh
           cp $HOME/kernel-peridot/out/arch/arm64/boot/Image.gz ./Image.gz
+
+          # --- FIX: reemplazar binarios armeabi (32-bit) por arm64 (aarch64) ---
+          # El template osm0sis/AnyKernel3 trae por defecto busybox, magiskboot
+          # y magiskpolicy compilados en ARM de 32 bits en tools/. OrangeFox
+          # 12.0.5 para peridot es una recovery de 64 bits pura y no puede
+          # ejecutar esos binarios de 32 bits, lo que produce el error
+          # "Busybox setup failed. Aborting..." al flashear.
+          # Aquí los reemplazamos por las versiones arm64-v8a incluidas
+          # dentro del APK oficial de Magisk.
+          echo "=== Descargando Magisk para extraer binarios arm64 ==="
+          curl -Lo /tmp/magisk.apk \
+            https://github.com/topjohnwu/Magisk/releases/latest/download/app-release.apk
+          unzip -o /tmp/magisk.apk -d /tmp/magisk_extract
+
+          echo "=== Contenido disponible en lib/arm64-v8a ==="
+          ls -la /tmp/magisk_extract/lib/arm64-v8a/
+
+          cp /tmp/magisk_extract/lib/arm64-v8a/libbusybox.so      tools/busybox
+          cp /tmp/magisk_extract/lib/arm64-v8a/libmagiskboot.so   tools/magiskboot
+          cp /tmp/magisk_extract/lib/arm64-v8a/libmagiskpolicy.so tools/magiskpolicy
+          chmod 755 tools/busybox tools/magiskboot tools/magiskpolicy
+
+          echo "=== Verificando arquitectura de binarios reemplazados ==="
+          file tools/busybox tools/magiskboot tools/magiskpolicy
+
+          # Verificación dura: si alguno no quedó en aarch64, aborta el build
+          for bin in tools/busybox tools/magiskboot tools/magiskpolicy; do
+            if ! file "$bin" | grep -qi "aarch64"; then
+              echo "ERROR: $bin no quedo en arquitectura aarch64. Abortando build."
+              exit 1
+            fi
+          done
+          # --- fin del fix ---
+
           zip -r9 $HOME/Tepuy-GameMode-peridot.zip * -x "*.zip" "*.git*" "README*"
           echo "AnyKernel3 zip created"
           ls -lh $HOME/Tepuy-GameMode-peridot.zip
@@ -181,4 +215,3 @@ jobs:
           name: build-log
           path: ~/kernel-peridot/out/build.log
           retention-days: 7
-         
