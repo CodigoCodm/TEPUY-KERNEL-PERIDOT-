@@ -61,12 +61,26 @@ jobs:
             https://github.com/LineageOS/android_kernel_xiaomi_sm8635 \
             $HOME/kernel-peridot
 
-      - name: Apply Tepuy GameMode patches
+      - name: Apply Tepuy GameMode patches (COMPAT - KMI-safe)
+        if: github.event.inputs.build_mode == 'compat' || github.event.inputs.build_mode == 'both'
+        run: |
+          cd $HOME/kernel-peridot
+          python3 ${{ github.workspace }}/tepuy-patcher-compat.py $HOME/kernel-peridot
+          echo ""
+          echo "=== Verifying KMI-safe modifications ==="
+          grep -n "tepuy_game_mode" kernel/tepuy_sysfs.c 2>/dev/null | head -5
+          grep -n "tepuy_game_mode" drivers/thermal/thermal_core.c 2>/dev/null | head -3
+          grep -n "tepuy_game_mode" drivers/cpufreq/cpufreq.c 2>/dev/null | head -3
+          grep -n "tepuy_game_mode" kernel/sched/cpufreq_schedutil.c 2>/dev/null | head -3 || \
+            grep -n "tepuy_game_mode" kernel/sched/schedutil.c 2>/dev/null | head -3 || true
+
+      - name: Apply Tepuy GameMode patches (FULL - vendor drivers)
+        if: github.event.inputs.build_mode == 'full'
         run: |
           cd $HOME/kernel-peridot
           python3 ${{ github.workspace }}/tepuy-patcher.py $HOME/kernel-peridot
           echo ""
-          echo "=== Verifying modifications ==="
+          echo "=== Verifying vendor driver modifications ==="
           grep -n "tepuy_game_mode" drivers/cpufreq/qcom-cpufreq-hw.c | head -5
           grep -n "tepuy_game_mode" drivers/gpu/drm/msm/adreno/adreno_gpu.c | head -3
           grep -n "tepuy_game_mode" drivers/gpu/drm/msm/adreno/a6xx_gmu.c | head -3
@@ -198,7 +212,7 @@ jobs:
             [ -n "$DTB" ] && cp "$DTB" ./dtb
           fi
 
-          # Download magiskboot for compat mode (needed for vbmeta patch)
+          # Download magiskboot for vbmeta patch
           mkdir -p tools
           APK_URL=$(curl -sf https://api.github.com/repos/topjohnwu/Magisk/releases/latest \
             | jq -r '.assets[] | select(.name | test("^Magisk-v.*\\.apk$")) | .browser_download_url' \
