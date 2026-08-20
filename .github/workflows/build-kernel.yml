@@ -40,7 +40,13 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends             git bc bison flex libssl-dev make             gcc-aarch64-linux-gnu clang llvm lld             device-tree-compiler python3 zip unzip             wget ccache libelf-dev libncurses-dev             libxml2-utils gcc-arm-linux-gnueabi             dwarves jq
+          sudo apt-get install -y -qq --no-install-recommends \
+            git bc bison flex libssl-dev make \
+            gcc-aarch64-linux-gnu clang llvm lld \
+            device-tree-compiler python3 zip unzip \
+            wget ccache libelf-dev libncurses-dev \
+            libxml2-utils gcc-arm-linux-gnueabi \
+            dwarves jq
 
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2
@@ -50,7 +56,9 @@ jobs:
 
       - name: Clone LineageOS kernel for peridot
         run: |
-          git clone --depth=1 -b lineage-23.2             https://github.com/LineageOS/android_kernel_xiaomi_sm8635             $HOME/kernel-peridot
+          git clone --depth=1 -b lineage-23.2 \
+            https://github.com/LineageOS/android_kernel_xiaomi_sm8635 \
+            $HOME/kernel-peridot
 
       - name: Apply Tepuy GameMode patches (COMPAT)
         if: github.event.inputs.build_mode == 'compat' || github.event.inputs.build_mode == 'both'
@@ -62,7 +70,6 @@ jobs:
           grep -n "tepuy_game_mode" kernel/tepuy_sysfs.c 2>/dev/null | head -5
           grep -n "tepuy_game_mode" drivers/thermal/thermal_core.c 2>/dev/null | head -3
           grep -n "tepuy_game_mode" drivers/cpufreq/cpufreq.c 2>/dev/null | head -3
-          grep -n "tepuy_game_mode" kernel/sched/cpufreq_schedutil.c 2>/dev/null | head -3 ||             grep -n "tepuy_game_mode" kernel/sched/schedutil.c 2>/dev/null | head -3 || true
 
       - name: Apply Tepuy GameMode patches (FULL)
         if: github.event.inputs.build_mode == 'full'
@@ -129,6 +136,78 @@ jobs:
             cp "$KERNEL_IMAGE" out/arch/arm64/boot/Image.gz
           fi
 
+      - name: Download magiskboot
+        run: |
+          echo "=== Downloading magiskboot for Linux x86_64 ==="
+          mkdir -p $HOME/magisk
+          cd $HOME/magisk
+
+          # Download Magisk APK and extract magiskboot
+          APK_URL=$(curl -sf https://api.github.com/repos/topjohnwu/Magisk/releases/latest \
+            | jq -r '.assets[] | select(.name | test("^Magisk-v.*\\.apk$")) | .browser_download_url' \
+            | head -n1)
+
+          if [ -z "$APK_URL" ] || [ "$APK_URL" == "null" ]; then
+            echo "WARNING: Could not download Magisk APK, trying alternative..."
+            # Fallback: download from GitHub directly
+            wget -q --timeout=30 "https://github.com/topjohnwu/Magisk/releases/download/v28.1/Magisk-v28.1.apk" -O magisk.apk 2>/dev/null || true
+          else
+            curl -Lfo magisk.apk "$APK_URL"
+          fi
+
+          if [ -f magisk.apk ]; then
+            # Try x86_64 first (runner is x86_64)
+            unzip -j magisk.apk "lib/x86_64/libmagiskboot.so" -d . 2>/dev/null || true
+            # Fallback to arm64
+            if [ ! -f libmagiskboot.so ]; then
+              unzip -j magisk.apk "lib/arm64-v8a/libmagiskboot.so" -d . 2>/dev/null || true
+            fi
+
+            if [ -f libmagiskboot.so ]; then
+              mv libmagiskboot.so magiskboot
+              chmod +x magiskboot
+              echo "magiskboot downloaded successfully"
+              ./magiskboot
+            else
+              echo "ERROR: Could not extract magiskboot from APK"
+              echo "Will try to build without magiskboot..."
+            fi
+          else
+            echo "ERROR: Could not download Magisk APK"
+          fi
+
+      - name: Build boot.img (pack kernel into stock boot)
+        run: |
+          cd $HOME
+
+          if [ ! -f "${{ github.workspace }}/boot_stock.img" ]; then
+            echo "ERROR: boot_stock.img not found in repo!"
+            echo "Please upload your stock boot.img to the repo root as 'boot_stock.img'"
+            exit 1
+          fi
+
+          if [ ! -f "$HOME/magisk/magiskboot" ]; then
+            echo "ERROR: magiskboot not available"
+            exit 1
+          fi
+
+          echo "=== Unpacking stock boot.img ==="
+          cp ${{ github.workspace }}/boot_stock.img $HOME/boot_stock.img
+          cd $HOME
+          $HOME/magisk/magiskboot unpack boot_stock.img
+
+          echo "=== Replacing kernel ==="
+          cp $HOME/kernel-peridot/out/arch/arm64/boot/Image.gz $HOME/kernel
+
+          echo "=== Repacking boot.img ==="
+          $HOME/magisk/magiskboot repack boot_stock.img boot_tepuy.img
+
+          echo "=== Verifying boot.img ==="
+          ls -lh $HOME/boot_tepuy.img
+          file $HOME/boot_tepuy.img
+
+          echo "=== Done! boot_tepuy.img is ready to flash ==="
+
       - name: Build COMPAT zip
         if: github.event.inputs.build_mode == 'compat' || github.event.inputs.build_mode == 'both'
         run: |
@@ -153,7 +232,9 @@ jobs:
             chmod -R 755 tools/
           fi
 
-          APK_URL=$(curl -sf https://api.github.com/repos/topjohnwu/Magisk/releases/latest             | jq -r '.assets[] | select(.name | test("^Magisk-v.*\.apk$")) | .browser_download_url'             | head -n1)
+          APK_URL=$(curl -sf https://api.github.com/repos/topjohnwu/Magisk/releases/latest \
+            | jq -r '.assets[] | select(.name | test("^Magisk-v.*\\.apk$")) | .browser_download_url' \
+            | head -n1)
           if [ -n "$APK_URL" ] && [ "$APK_URL" != "null" ]; then
             curl -Lfo /tmp/magisk_compat.apk "$APK_URL" 2>/dev/null || true
             if [ -f /tmp/magisk_compat.apk ]; then
@@ -193,8 +274,16 @@ jobs:
             [ -n "$DTB" ] && cp "$DTB" ./dtb
           fi
 
+          if [ -f "${{ github.workspace }}/dtbo.img" ]; then
+            echo "=== Using dtbo.img from repo ==="
+            cp ${{ github.workspace }}/dtbo.img ./dtbo.img
+          fi
+
           mkdir -p _modules _system_dlkm
-          python3 ${{ github.workspace }}/prepare-modules.py             --input "$HOME/modules_staging"             --vendor-out "_modules"             --system-out "_system_dlkm"
+          python3 ${{ github.workspace }}/prepare-modules.py \
+            --input "$HOME/modules_staging" \
+            --vendor-out "_modules" \
+            --system-out "_system_dlkm"
 
           mkdir -p tools
           if [ -d "${{ github.workspace }}/tools" ]; then
@@ -269,6 +358,13 @@ jobs:
           zip -r9 $HOME/Tepuy-GameMode-AutoActivator.zip module.prop service.sh
           echo "GameMode Auto-Activator module created"
           ls -lh $HOME/Tepuy-GameMode-AutoActivator.zip
+
+      - name: Upload boot.img
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot_tepuy
+          path: ~/boot_tepuy.img
+          retention-days: 30
 
       - name: Upload COMPAT zip
         if: github.event.inputs.build_mode == 'compat' || github.event.inputs.build_mode == 'both'
