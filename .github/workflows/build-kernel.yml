@@ -46,8 +46,7 @@ jobs:
             device-tree-compiler python3 zip unzip \
             wget ccache libelf-dev libncurses-dev \
             libxml2-utils gcc-arm-linux-gnueabi \
-            dwarves jq autoconf automake libtool pkg-config \
-            cmake ninja-build
+            dwarves jq
 
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2
@@ -139,61 +138,6 @@ jobs:
             cp "$KERNEL_IMAGE" out/arch/arm64/boot/Image.gz
           fi
 
-      - name: Build tools for recovery (aarch64 static)
-        if: github.event.inputs.build_mode == 'full' || github.event.inputs.build_mode == 'both'
-        run: |
-          mkdir -p $HOME/tools
-
-          echo "=== Building erofs-utils ==="
-          git clone --depth=1 https://github.com/erofs/erofs-utils $HOME/erofs-utils
-          cd $HOME/erofs-utils
-          ./autogen.sh
-          ./configure --host=aarch64-linux-gnu --prefix=$HOME/tools \
-              CC=aarch64-linux-gnu-gcc CFLAGS="-static -O2" LDFLAGS="-static"
-          make -j$(nproc)
-          make install
-
-          echo "=== Building e2fsprogs ==="
-          wget -q https://downloads.sourceforge.net/project/e2fsprogs/e2fsprogs/v1.47.0/e2fsprogs-1.47.0.tar.gz -O /tmp/e2fsprogs.tar.gz
-          tar xzf /tmp/e2fsprogs.tar.gz -C $HOME
-          cd $HOME/e2fsprogs-1.47.0
-          ./configure --host=aarch64-linux-gnu --prefix=$HOME/tools \
-              CFLAGS="-static -O2" LDFLAGS="-static" \
-              --disable-defrag --disable-debugfs --disable-imager \
-              --disable-resizer --disable-tune2fs --disable-e2initrd \
-              --disable-uuidd --disable-nls --disable-elf-shlibs \
-              --disable-profile --disable-jbd-debug --disable-blkid-debug
-          make -j$(nproc)
-          make install
-
-          echo "=== Building p7zip ==="
-          git clone --depth=1 https://github.com/p7zip-project/p7zip $HOME/p7zip
-          cd $HOME/p7zip
-          make -j$(nproc) CC=aarch64-linux-gnu-gcc CXX=aarch64-linux-gnu-g++ LDFLAGS="-static" 7za
-          cp bin/7za $HOME/tools/bin/7za
-          chmod 755 $HOME/tools/bin/7za
-
-      - name: Download Magisk tools
-        if: github.event.inputs.build_mode == 'full' || github.event.inputs.build_mode == 'both'
-        run: |
-          mkdir -p $HOME/tools/bin
-          APK_URL=$(curl -sf https://api.github.com/repos/topjohnwu/Magisk/releases/latest \
-            | jq -r '.assets[] | select(.name | test("^Magisk-v.*\\.apk$")) | .browser_download_url' \
-            | head -n1)
-
-          if [ -z "$APK_URL" ] || [ "$APK_URL" == "null" ]; then
-            echo "ERROR: Could not resolve Magisk APK URL"
-            exit 1
-          fi
-
-          curl -Lfo /tmp/magisk.apk "$APK_URL"
-          unzip -o /tmp/magisk.apk -d /tmp/magisk_extract > /dev/null
-
-          cp /tmp/magisk_extract/lib/arm64-v8a/libbusybox.so $HOME/tools/bin/busybox
-          cp /tmp/magisk_extract/lib/arm64-v8a/libmagiskboot.so $HOME/tools/bin/magiskboot
-          cp /tmp/magisk_extract/lib/arm64-v8a/libmagiskpolicy.so $HOME/tools/bin/magiskpolicy
-          chmod 755 $HOME/tools/bin/busybox $HOME/tools/bin/magiskboot $HOME/tools/bin/magiskpolicy
-
       - name: Build COMPAT zip (boot only, multi-version compatible)
         if: github.event.inputs.build_mode == 'compat' || github.event.inputs.build_mode == 'both'
         run: |
@@ -212,18 +156,36 @@ jobs:
             [ -n "$DTB" ] && cp "$DTB" ./dtb
           fi
 
-          # Download magiskboot for vbmeta patch
+          # Copy tools from repo (RealKing tools) if available
           mkdir -p tools
+          if [ -d "${{ github.workspace }}/tools" ]; then
+            echo "=== Using tools from repo (RealKing) ==="
+            cp -r ${{ github.workspace }}/tools/* tools/ 2>/dev/null || true
+            chmod -R 755 tools/
+          fi
+
+          # Always download magiskboot/busybox for vbmeta patch (COMPAT needs this)
           APK_URL=$(curl -sf https://api.github.com/repos/topjohnwu/Magisk/releases/latest \
             | jq -r '.assets[] | select(.name | test("^Magisk-v.*\\.apk$")) | .browser_download_url' \
             | head -n1)
-          curl -Lfo /tmp/magisk_compat.apk "$APK_URL" 2>/dev/null || true
-          if [ -f /tmp/magisk_compat.apk ]; then
-            unzip -o /tmp/magisk_compat.apk -d /tmp/magisk_compat > /dev/null
-            cp /tmp/magisk_compat/lib/arm64-v8a/libmagiskboot.so tools/magiskboot
-            cp /tmp/magisk_compat/lib/arm64-v8a/libbusybox.so tools/busybox
-            chmod 755 tools/magiskboot tools/busybox
+          if [ -n "$APK_URL" ] && [ "$APK_URL" != "null" ]; then
+            curl -Lfo /tmp/magisk_compat.apk "$APK_URL" 2>/dev/null || true
+            if [ -f /tmp/magisk_compat.apk ]; then
+              unzip -o /tmp/magisk_compat.apk -d /tmp/magisk_compat > /dev/null
+              cp /tmp/magisk_compat/lib/arm64-v8a/libmagiskboot.so tools/magiskboot 2>/dev/null || true
+              cp /tmp/magisk_compat/lib/arm64-v8a/libbusybox.so tools/busybox 2>/dev/null || true
+              chmod 755 tools/magiskboot tools/busybox 2>/dev/null || true
+            fi
           fi
+
+          # If repo has ak3-core.sh (RealKing modified), use it
+          if [ -f "${{ github.workspace }}/tools/ak3-core.sh" ]; then
+            echo "=== Using ak3-core.sh from RealKing ==="
+            cp ${{ github.workspace }}/tools/ak3-core.sh tools/ak3-core.sh
+          fi
+
+          echo "=== Tools in COMPAT zip ==="
+          ls -la tools/ 2>/dev/null | head -20
 
           zip -r9 $HOME/Tepuy-Kernel-Compat-peridot.zip * -x "*.zip" "*.git*" "README*"
           echo "COMPAT zip created"
@@ -254,15 +216,89 @@ jobs:
             --vendor-out "_modules" \
             --system-out "_system_dlkm"
 
-          # Tools
+          # Copy ALL tools from repo (RealKing tools - REQUIRED for FULL)
           mkdir -p tools
-          cp -r $HOME/tools/bin/* tools/ 2>/dev/null || true
-          cp -r $HOME/tools/sbin/* tools/ 2>/dev/null || true
-          chmod -R 755 tools/
+          if [ -d "${{ github.workspace }}/tools" ]; then
+            echo "=== Using ALL tools from repo (RealKing) ==="
+            cp -r ${{ github.workspace }}/tools/* tools/ 2>/dev/null || true
+            chmod -R 755 tools/
+            echo "=== Tools copied ==="
+            ls -la tools/ | head -30
+          else
+            echo "ERROR: tools/ directory not found in repo!"
+            echo "FULL mode requires tools from RealKing zip."
+            echo "Please extract tools/ from RealKing and upload to your repo."
+            exit 1
+          fi
+
+          # If repo has ak3-core.sh (RealKing modified), use it
+          if [ -f "${{ github.workspace }}/tools/ak3-core.sh" ]; then
+            echo "=== Using ak3-core.sh from RealKing ==="
+            cp ${{ github.workspace }}/tools/ak3-core.sh tools/ak3-core.sh
+          fi
 
           zip -r9 $HOME/Tepuy-Kernel-Full-peridot.zip * -x "*.zip" "*.git*" "README*"
           echo "FULL zip created"
           ls -lh $HOME/Tepuy-Kernel-Full-peridot.zip
+
+      - name: Build GameMode Auto-Activator module
+        if: github.event.inputs.build_mode == 'compat' || github.event.inputs.build_mode == 'both'
+        run: |
+          mkdir -p $HOME/gamemode-module
+          cd $HOME/gamemode-module
+
+          cat > module.prop << 'EOF'
+id=tepuy-gamemode-auto
+name=Tepuy GameMode Auto-Activator
+version=1.0
+versionCode=1
+author=CodigoCodm
+description=Activa automaticamente Tepuy GameMode al arrancar. Requiere kernel Tepuy. Compatible Magisk/KernelSU.
+EOF
+
+          cat > service.sh << 'EOF'
+#!/system/bin/sh
+LOG_FILE="/data/local/tmp/tepuy-gamemode.log"
+SYSFS_NODE="/sys/kernel/tepuy_boost/game_mode"
+MAX_WAIT=30
+
+log_msg() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
+}
+
+rm -f "$LOG_FILE"
+log_msg "=== Tepuy GameMode Auto-Activator iniciado ==="
+log_msg "Esperando sysfs node..."
+
+waited=0
+while [ ! -f "$SYSFS_NODE" ]; do
+    sleep 1
+    waited=$((waited + 1))
+    if [ $waited -ge $MAX_WAIT ]; then
+        log_msg "ERROR: sysfs node no aparecio despues de ${MAX_WAIT}s"
+        log_msg "Kernel Tepuy no detectado."
+        exit 1
+    fi
+done
+
+log_msg "sysfs node encontrado despues de ${waited}s"
+current=$(cat "$SYSFS_NODE" 2>/dev/null)
+log_msg "Estado actual: $current"
+
+if echo 1 > "$SYSFS_NODE" 2>/dev/null; then
+    new_state=$(cat "$SYSFS_NODE" 2>/dev/null)
+    log_msg "SUCCESS: GameMode activado. Estado: $new_state"
+else
+    log_msg "ERROR: No se pudo escribir en sysfs."
+    exit 1
+fi
+
+log_msg "=== Activacion completada ==="
+EOF
+
+          zip -r9 $HOME/Tepuy-GameMode-AutoActivator.zip module.prop service.sh
+          echo "GameMode Auto-Activator module created"
+          ls -lh $HOME/Tepuy-GameMode-AutoActivator.zip
 
       - name: Upload COMPAT zip
         if: github.event.inputs.build_mode == 'compat' || github.event.inputs.build_mode == 'both'
@@ -278,6 +314,14 @@ jobs:
         with:
           name: Tepuy-Kernel-Full-peridot
           path: ~/Tepuy-Kernel-Full-peridot.zip
+          retention-days: 30
+
+      - name: Upload GameMode Auto-Activator module
+        if: github.event.inputs.build_mode == 'compat' || github.event.inputs.build_mode == 'both'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tepuy-GameMode-AutoActivator
+          path: ~/Tepuy-GameMode-AutoActivator.zip
           retention-days: 30
 
       - name: Upload kernel image
