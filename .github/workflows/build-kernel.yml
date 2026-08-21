@@ -1,4 +1,4 @@
-name: TEPUY - Peridot Kernel Build
+name: Build Peridot Kernel
 
 on:
   workflow_dispatch:
@@ -14,40 +14,13 @@ jobs:
       KBUILD_BUILD_HOST: TEPUY
 
     steps:
-
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
           submodules: recursive
+          fetch-depth: 1
 
-      - name: Detect kernel directory
-        shell: bash
-        run: |
-          set -eux
-
-          echo "=========================================="
-          echo "DETECTING KERNEL TREE"
-          echo "=========================================="
-
-          if [ -d kernel ] && [ -f kernel/Makefile ]; then
-            echo "kernel" > .kernel_dir
-          elif [ -d xiaomi ] && [ -f xiaomi/Makefile ]; then
-            echo "xiaomi" > .kernel_dir
-          elif [ -f Makefile ]; then
-            echo "." > .kernel_dir
-          else
-            echo "::error::Kernel Makefile not found"
-            exit 1
-          fi
-
-          KERNEL_DIR="$(cat .kernel_dir)"
-
-          echo "KERNEL_DIR=$KERNEL_DIR"
-          echo "KERNEL_DIR=$KERNEL_DIR" >> "$GITHUB_ENV"
-
-      - name: Install build dependencies
-        shell: bash
+      - name: Install dependencies
         run: |
           set -eux
 
@@ -56,102 +29,71 @@ jobs:
           sudo apt-get install -y \
             bc \
             bison \
-            flex \
             build-essential \
+            ccache \
+            clang \
+            flex \
             gcc-aarch64-linux-gnu \
-            binutils-aarch64-linux-gnu \
-            libssl-dev \
+            git \
             libelf-dev \
+            libssl-dev \
+            lld \
+            llvm \
+            make \
             pahole \
-            cpio \
-            rsync \
             python3 \
-            perl \
-            curl \
-            wget \
+            python3-pip \
+            rsync \
             unzip \
-            zip \
-            p7zip-full \
-            tar \
-            xz-utils \
-            zstd
+            zip
 
-      - name: Prepare RealKing Clang
+      - name: Detect kernel tree
         shell: bash
         run: |
           set -eux
 
           echo "=========================================="
-          echo "REALKING CLANG"
+          echo "DETECTING KERNEL TREE"
           echo "=========================================="
 
-          MAIN="$GITHUB_WORKSPACE"
+          KERNEL_DIR=""
 
-          if [ -d "$MAIN/clang/bin" ]; then
-            echo "Existing clang directory found."
-          else
-            echo "Downloading ZyC Stable Clang..."
+          while IFS= read -r makefile; do
+            dir="$(dirname "$makefile")"
 
-            CLANG_URL="$(curl -fsSL \
-              https://raw.githubusercontent.com/v3kt0r-87/Clang-Stable/main/clang-zyc.txt)"
+            if [ -d "$dir/arch/arm64" ]; then
+              KERNEL_DIR="$dir"
+              break
+            fi
+          done < <(
+            find . \
+              -type f \
+              -name Makefile \
+              -not -path '*/.git/*' \
+              | sort
+          )
 
-            test -n "$CLANG_URL"
-
-            echo "Clang URL:"
-            echo "$CLANG_URL"
-
-            wget \
-              --fail \
-              --show-progress \
-              "$CLANG_URL" \
-              -O "$MAIN/zyc-clang.tar.gz"
-
-            mkdir -p "$MAIN/clang"
-
-            tar \
-              -xvf "$MAIN/zyc-clang.tar.gz" \
-              -C "$MAIN/clang"
-
-            rm -f "$MAIN/zyc-clang.tar.gz"
+          if [ -z "$KERNEL_DIR" ]; then
+            echo "::error::No ARM64 kernel tree found"
+            find . -maxdepth 4 -type f -name Makefile -print
+            exit 1
           fi
 
-          test -x "$MAIN/clang/bin/clang"
+          KERNEL_DIR="$(cd "$KERNEL_DIR" && pwd)"
 
-          echo ""
-          echo "Clang:"
-          "$MAIN/clang/bin/clang" --version
+          echo "Kernel tree:"
+          echo "$KERNEL_DIR"
 
-          echo ""
-          echo "LLD:"
-          "$MAIN/clang/bin/ld.lld" --version
+          echo "KERNEL_DIR=$KERNEL_DIR" >> "$GITHUB_ENV"
 
-          echo ""
-          echo "LLVM NM:"
-          "$MAIN/clang/bin/llvm-nm" --version | head -1
-
-          echo ""
-          echo "LLVM OBJDUMP:"
-          "$MAIN/clang/bin/llvm-objdump" --version | head -1
-
-          echo ""
-          echo "LLVM STRIP:"
-          "$MAIN/clang/bin/llvm-strip" --version | head -1
-
-          echo ""
-          echo "PATH:"
-          echo "$MAIN/clang/bin" >> "$GITHUB_PATH"
-
-          echo "CLANG_DIR=$MAIN/clang" >> "$GITHUB_ENV"
-
-      - name: Verify Peridot source
-        shell: bash
+      - name: Inspect kernel tree
         run: |
           set -eux
 
           cd "$KERNEL_DIR"
 
           echo "=========================================="
-          echo "PERIDOT SOURCE"
+          echo "KERNEL TREE"
           echo "=========================================="
 
           pwd
@@ -159,42 +101,25 @@ jobs:
           echo ""
           echo "Git:"
           git rev-parse --short HEAD || true
-          git describe --tags --always || true
+          git branch --show-current || true
 
           echo ""
-          echo "Checking Makefile..."
-          test -f Makefile
+          echo "Kernel Makefile:"
+          head -40 Makefile
 
           echo ""
-          echo "Checking peridot_defconfig..."
-          test -f arch/arm64/configs/peridot_defconfig
+          echo "Peridot configs:"
+          find . \
+            -maxdepth 2 \
+            -type f \
+            \( \
+              -name '*peridot*' \
+              -o -name 'build.config.msm.peridot' \
+            \) \
+            -print \
+            | sort
 
-          echo ""
-          echo "peridot_defconfig FOUND"
-
-      - name: Verify compiler environment
-        shell: bash
-        run: |
-          set -eux
-
-          echo "=========================================="
-          echo "COMPILER ENVIRONMENT"
-          echo "=========================================="
-
-          command -v clang
-          command -v clang++
-          command -v ld.lld
-          command -v llvm-nm
-          command -v llvm-objdump
-          command -v llvm-strip
-          command -v aarch64-linux-gnu-gcc
-
-          echo ""
-          clang --version
-          echo ""
-          aarch64-linux-gnu-gcc --version | head -1
-
-      - name: Generate Peridot defconfig
+      - name: Detect project Clang
         shell: bash
         run: |
           set -eux
@@ -202,23 +127,99 @@ jobs:
           cd "$KERNEL_DIR"
 
           echo "=========================================="
-          echo "PERIDOT DEFCONFIG"
+          echo "DETECTING CLANG"
           echo "=========================================="
 
-          rm -rf out
-          mkdir -p out
+          CLANG_BIN=""
 
-          make \
-            peridot_defconfig \
-            O=out \
-            CC=clang
+          for candidate in \
+            "$KERNEL_DIR/prebuilts/clang/host/linux-x86/clang/bin" \
+            "$KERNEL_DIR/prebuilts/clang/host/linux-x86/clang-*/bin" \
+            "$GITHUB_WORKSPACE/prebuilts/clang/host/linux-x86/clang/bin" \
+            "$GITHUB_WORKSPACE/prebuilts/clang/host/linux-x86/clang-*/bin"
+          do
+            for d in $candidate; do
+              if [ -x "$d/clang" ]; then
+                CLANG_BIN="$d"
+                break 2
+              fi
+            done
+          done
 
-          test -f out/.config
+          if [ -n "$CLANG_BIN" ]; then
+            echo "Using project Clang:"
+            echo "$CLANG_BIN"
 
-          echo ""
-          echo "Defconfig generated successfully."
+            echo "$CLANG_BIN" >> "$GITHUB_PATH"
 
-      - name: Build Peridot kernel
+            echo "LLVM=1" >> "$GITHUB_ENV"
+            echo "LLVM_IAS=1" >> "$GITHUB_ENV"
+          else
+            echo "Project Clang not found."
+            echo "Using Ubuntu LLVM/Clang."
+
+            echo "LLVM=1" >> "$GITHUB_ENV"
+            echo "LLVM_IAS=1" >> "$GITHUB_ENV"
+          fi
+
+      - name: Show compiler
+        run: |
+          set -eux
+
+          echo "=========================================="
+          echo "COMPILER"
+          echo "=========================================="
+
+          command -v clang
+          clang --version
+
+          command -v ld.lld
+          ld.lld --version
+
+          command -v aarch64-linux-gnu-gcc
+          aarch64-linux-gnu-gcc --version | head -1
+
+      - name: Detect Peridot defconfig
+        shell: bash
+        run: |
+          set -eux
+
+          cd "$KERNEL_DIR"
+
+          echo "=========================================="
+          echo "DETECTING PERIDOT DEFCONFIG"
+          echo "=========================================="
+
+          DEFCONFIG=""
+
+          for f in \
+            arch/arm64/configs/peridot_defconfig \
+            arch/arm64/configs/vendor/peridot_defconfig \
+            arch/arm64/configs/*/peridot_defconfig
+          do
+            if [ -f "$f" ]; then
+              DEFCONFIG="$(basename "$f")"
+              break
+            fi
+          done
+
+          if [ -z "$DEFCONFIG" ]; then
+            echo "::error::peridot_defconfig not found"
+
+            find arch/arm64/configs \
+              -type f \
+              -iname '*peridot*' \
+              -print \
+              | sort
+
+            exit 1
+          fi
+
+          echo "DEFCONFIG=$DEFCONFIG"
+
+          echo "DEFCONFIG=$DEFCONFIG" >> "$GITHUB_ENV"
+
+      - name: Build kernel
         shell: bash
         run: |
           set -eux
@@ -229,27 +230,30 @@ jobs:
           echo "BUILDING PERIDOT"
           echo "=========================================="
 
-          echo "CPU threads:"
-          nproc --all
+          rm -rf out
 
-          echo ""
-          echo "Compiler:"
-          clang --version
-
-          echo ""
-          echo "Starting build..."
+          mkdir -p out
 
           make \
-            -j"$(nproc --all)" \
-            O=out \
-            CC=clang \
+            O="$PWD/out" \
             ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
             CROSS_COMPILE=aarch64-linux-gnu- \
-            NM=llvm-nm \
-            OBJDUMP=llvm-objdump \
-            STRIP=llvm-strip
+            "$DEFCONFIG"
 
-      - name: Verify Image.gz
+          make \
+            -j"$(nproc)" \
+            O="$PWD/out" \
+            ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            Image \
+            dtbs \
+            modules
+
+      - name: Verify build
         shell: bash
         run: |
           set -eux
@@ -257,33 +261,27 @@ jobs:
           cd "$KERNEL_DIR"
 
           echo "=========================================="
-          echo "VERIFYING KERNEL"
+          echo "VERIFYING OUTPUT"
           echo "=========================================="
 
-          ZIMAGE="out/arch/arm64/boot/Image.gz"
+          echo "Images:"
+          find out/arch/arm64/boot \
+            -maxdepth 2 \
+            -type f \
+            | sort
 
-          if [ ! -f "$ZIMAGE" ]; then
-            echo "::error::Image.gz was not generated"
-            echo ""
-            echo "Available boot outputs:"
-            find out/arch/arm64/boot \
-              -maxdepth 2 \
-              -type f \
-              2>/dev/null \
-              | sort || true
+          if [ ! -f out/arch/arm64/boot/Image ]; then
+            echo "::error::Kernel Image was not generated"
             exit 1
           fi
 
-          echo "Image.gz:"
-          ls -lh "$ZIMAGE"
-
           echo ""
-          echo "Image:"
-          if [ -f out/arch/arm64/boot/Image ]; then
-            ls -lh out/arch/arm64/boot/Image
-          fi
+          echo "Kernel Image:"
+          ls -lh out/arch/arm64/boot/Image
 
-      - name: Collect build information
+          file out/arch/arm64/boot/Image
+
+      - name: Package kernel
         shell: bash
         run: |
           set -eux
@@ -292,40 +290,28 @@ jobs:
 
           mkdir -p "$GITHUB_WORKSPACE/dist"
 
-          cp \
-            out/arch/arm64/boot/Image.gz \
-            "$GITHUB_WORKSPACE/dist/Image.gz"
+          cp out/arch/arm64/boot/Image \
+            "$GITHUB_WORKSPACE/dist/Image"
 
-          if [ -f out/arch/arm64/boot/Image ]; then
-            cp \
-              out/arch/arm64/boot/Image \
-              "$GITHUB_WORKSPACE/dist/Image"
-          fi
+          find out/arch/arm64/boot \
+            -type f \
+            \( \
+              -name '*.dtb' \
+              -o -name '*.dtbo' \
+            \) \
+            -exec cp {} "$GITHUB_WORKSPACE/dist/" \; \
+            || true
 
-          {
-            echo "=========================================="
-            echo "TEPUY PERIDOT BUILD"
-            echo "=========================================="
-            echo ""
-            echo "Commit:"
-            git rev-parse HEAD || true
-            echo ""
-            echo "Compiler:"
-            clang --version
-            echo ""
-            echo "Defconfig:"
-            echo "peridot_defconfig"
-            echo ""
-            echo "Build user:"
-            echo "$KBUILD_BUILD_USER"
-            echo ""
-            echo "Build host:"
-            echo "$KBUILD_BUILD_HOST"
-          } > "$GITHUB_WORKSPACE/dist/build-info.txt"
+          cd "$GITHUB_WORKSPACE"
+
+          zip -r \
+            "TEPUY-PERIDOT-${GITHUB_SHA::7}.zip" \
+            dist
 
       - name: Upload kernel
         uses: actions/upload-artifact@v4
         with:
           name: tepuy-peridot-kernel
-          path: dist/
-          if-no-files-found: error
+          path: |
+            TEPUY-PERIDOT-*.zip
+            dist/
