@@ -52,18 +52,33 @@ jobs:
           sudo apt update
 
           sudo apt install -y \
-            bc bison flex build-essential \
-            libssl-dev libelf-dev libncurses-dev \
-            python3 python-is-python3 python3-pip \
-            clang llvm lld \
+            bc \
+            bison \
+            flex \
+            build-essential \
+            libssl-dev \
+            libelf-dev \
+            libncurses-dev \
+            python3 \
+            python-is-python3 \
+            python3-pip \
+            clang \
+            llvm \
+            lld \
             gcc-aarch64-linux-gnu \
             gcc-arm-linux-gnueabi \
             device-tree-compiler \
-            ccache curl wget jq zip unzip dwarves \
+            ccache \
+            curl \
+            wget \
+            jq \
+            zip \
+            unzip \
+            dwarves \
             git
 
       ###############################################################
-      # ccache
+      # Setup ccache
       ###############################################################
 
       - name: Setup ccache
@@ -81,7 +96,8 @@ jobs:
 
           rm -rf "$HOME/kernel-peridot"
 
-          git clone --depth=1 \
+          git clone \
+            --depth=1 \
             https://github.com/peridot-dev/android_kernel_xiaomi_sm8635.git \
             "$HOME/kernel-peridot"
 
@@ -91,69 +107,126 @@ jobs:
           echo " ORIGINAL PERIDOT KERNEL"
           echo "=============================================="
 
+          echo ""
           echo "Remote:"
           git remote -v
 
           echo ""
-          echo "Kernel commit:"
+          echo "Commit:"
           git log --oneline -1
 
           echo ""
-          echo "Kernel version:"
+          echo "Kernel:"
           git describe --always --dirty 2>/dev/null || true
 
+          echo ""
           echo "=============================================="
 
-          if git remote -v | grep -q \
-            "LineageOS/android_kernel_xiaomi_sm8635"; then
-
+          if git remote -v | grep -qi "LineageOS"; then
             echo "ERROR: LineageOS kernel detected!"
             exit 1
           fi
 
-          if git remote -v | grep -q \
-            "peridot-dev/android_kernel_xiaomi_sm8635"; then
-
-            echo "[OK] Original Peridot repository detected."
-
-          else
-
-            echo "[WARNING] Remote does not match expected Peridot repository."
-            echo "[INFO] Expected:"
-            echo "https://github.com/peridot-dev/android_kernel_xiaomi_sm8635.git"
-
-          fi
+          echo "[OK] Original Peridot source cloned."
 
       ###############################################################
-      # Verify Tepuy Patcher Files
+      # Locate Tepuy Patcher
       ###############################################################
 
-      - name: Verify Tepuy Patcher Files
+      - name: Locate Tepuy Patcher Files
         run: |
 
           echo "=============================================="
-          echo " VERIFY TEPUY PATCHER"
+          echo " LOCATE TEPUY PATCHER"
           echo "=============================================="
 
-          test -f \
-            "${{ github.workspace }}/tepuy-patcher.compact.py" || {
-              echo "ERROR: tepuy-patcher.compact.py missing!"
-              exit 1
-          }
+          echo ""
+          echo "Workspace:"
+          echo "${{ github.workspace }}"
 
-          test -f \
-            "${{ github.workspace }}/tepuy_sysfs.c" || {
-              echo "ERROR: tepuy_sysfs.c missing!"
-              exit 1
-          }
+          echo ""
+          echo "Searching for:"
+          echo "  tepuy-patcher-compact.py"
+          echo "  tepuy_sysfs.c"
 
-          echo "[OK] tepuy-patcher.compact.py found"
-          echo "[OK] tepuy_sysfs.c found"
+          echo ""
 
-          python3 -m py_compile \
-            "${{ github.workspace }}/tepuy-patcher.compact.py"
+          PATCHER=$(find \
+            "${{ github.workspace }}" \
+            -type f \
+            -name "tepuy-patcher-compact.py" \
+            -print \
+            -quit)
 
-          echo "[OK] Python patcher syntax valid."
+          SYSFS=$(find \
+            "${{ github.workspace }}" \
+            -type f \
+            -name "tepuy_sysfs.c" \
+            -print \
+            -quit)
+
+          ###########################################################
+          # Check patcher
+          ###########################################################
+
+          if [ -z "$PATCHER" ]; then
+
+            echo "ERROR: tepuy-patcher-compact.py not found!"
+
+            echo ""
+            echo "Repository contents:"
+            find "${{ github.workspace }}" \
+              -maxdepth 4 \
+              -type f \
+              | sort
+
+            exit 1
+
+          fi
+
+          ###########################################################
+          # Check sysfs source
+          ###########################################################
+
+          if [ -z "$SYSFS" ]; then
+
+            echo "ERROR: tepuy_sysfs.c not found!"
+
+            echo ""
+            echo "Repository contents:"
+            find "${{ github.workspace }}" \
+              -maxdepth 4 \
+              -type f \
+              | sort
+
+            exit 1
+
+          fi
+
+          echo "[OK] Patcher found:"
+          echo "$PATCHER"
+
+          echo ""
+          echo "[OK] tepuy_sysfs.c found:"
+          echo "$SYSFS"
+
+          ###########################################################
+          # Export paths
+          ###########################################################
+
+          echo "TEPUY_PATCHER=$PATCHER" >> "$GITHUB_ENV"
+          echo "TEPUY_SYSFS=$SYSFS" >> "$GITHUB_ENV"
+
+          ###########################################################
+          # Python syntax verification
+          ###########################################################
+
+          echo ""
+          echo "Checking Python syntax..."
+
+          python3 -m py_compile "$PATCHER"
+
+          echo "[OK] tepuy-patcher-compact.py syntax valid."
 
       ###############################################################
       # Apply Tepuy Compact Patch
@@ -168,8 +241,18 @@ jobs:
           echo " APPLY TEPUY COMPACT PATCH"
           echo "=============================================="
 
+          echo ""
+          echo "Patcher:"
+          echo "$TEPUY_PATCHER"
+
+          echo ""
+          echo "Kernel:"
+          echo "$HOME/kernel-peridot"
+
+          echo ""
+
           python3 \
-            "${{ github.workspace }}/tepuy-patcher.compact.py" \
+            "$TEPUY_PATCHER" \
             "$HOME/kernel-peridot"
 
           echo ""
@@ -177,29 +260,54 @@ jobs:
           echo " PATCH VERIFICATION"
           echo "=============================================="
 
-          test -f kernel/tepuy_sysfs.c || {
+          ###########################################################
+          # Verify tepuy_sysfs.c
+          ###########################################################
+
+          test -f \
+            kernel/tepuy_sysfs.c || {
+
             echo "ERROR: kernel/tepuy_sysfs.c missing!"
             exit 1
           }
 
-          grep -q "tepuy_game_mode" \
+          ###########################################################
+          # Verify cpufreq patch
+          ###########################################################
+
+          grep -q \
+            "tepuy_game_mode" \
             drivers/cpufreq/cpufreq.c || {
-              echo "ERROR: cpufreq.c was not patched!"
-              exit 1
+
+            echo "ERROR: cpufreq.c was not patched!"
+            exit 1
           }
 
-          grep -q "tepuy_game_mode" \
+          ###########################################################
+          # Verify thermal patch
+          ###########################################################
+
+          grep -q \
+            "tepuy_game_mode" \
             drivers/thermal/thermal_core.c || {
+
             echo "ERROR: thermal_core.c was not patched!"
             exit 1
           }
 
-          grep -q "tepuy_sysfs.o" \
+          ###########################################################
+          # Verify Makefile
+          ###########################################################
+
+          grep -q \
+            "tepuy_sysfs.o" \
             kernel/Makefile || {
+
             echo "ERROR: kernel/Makefile was not patched!"
             exit 1
           }
 
+          echo ""
           echo "[OK] kernel/tepuy_sysfs.c"
           echo "[OK] drivers/cpufreq/cpufreq.c"
           echo "[OK] drivers/thermal/thermal_core.c"
@@ -209,7 +317,7 @@ jobs:
           echo "[OK] Tepuy patch applied successfully."
 
       ###############################################################
-      # Show Patched Source
+      # Show Patch Status
       ###############################################################
 
       - name: Show Tepuy Patch Status
@@ -222,23 +330,32 @@ jobs:
           echo "=============================================="
 
           echo ""
-          echo "--- tepuy_sysfs.c ---"
-          ls -lh kernel/tepuy_sysfs.c
+          echo "=== tepuy_sysfs.c ==="
+
+          ls -lh \
+            kernel/tepuy_sysfs.c
 
           echo ""
-          echo "--- cpufreq.c ---"
-          grep -n -A8 -B3 \
+          echo "=== cpufreq.c ==="
+
+          grep -n \
+            -A8 \
+            -B3 \
             "tepuy_game_mode" \
             drivers/cpufreq/cpufreq.c || true
 
           echo ""
-          echo "--- thermal_core.c ---"
-          grep -n -A5 -B3 \
+          echo "=== thermal_core.c ==="
+
+          grep -n \
+            -A8 \
+            -B3 \
             "tepuy_game_mode" \
             drivers/thermal/thermal_core.c || true
 
           echo ""
-          echo "--- kernel/Makefile ---"
+          echo "=== kernel/Makefile ==="
+
           grep -n \
             "tepuy_sysfs" \
             kernel/Makefile || true
@@ -273,7 +390,8 @@ jobs:
           echo " CONFIGURE KERNEL"
           echo "=============================================="
 
-          make O=out \
+          make \
+            O=out \
             "${{ github.event.inputs.defconfig }}" \
             2>&1 | tee out/defconfig.log
 
@@ -282,7 +400,8 @@ jobs:
           echo " BUILD KERNEL"
           echo "=============================================="
 
-          make O=out \
+          make \
+            O=out \
             -j"$(nproc)" \
             2>&1 | tee out/build.log
 
@@ -291,7 +410,8 @@ jobs:
           echo " BUILD MODULES"
           echo "=============================================="
 
-          make O=out \
+          make \
+            O=out \
             modules \
             -j"$(nproc)" \
             2>&1 | tee -a out/build.log
@@ -301,7 +421,8 @@ jobs:
           echo " INSTALL MODULES"
           echo "=============================================="
 
-          make O=out \
+          make \
+            O=out \
             INSTALL_MOD_PATH="$HOME/modules_staging" \
             INSTALL_MOD_STRIP=1 \
             modules_install \
@@ -310,7 +431,8 @@ jobs:
           echo ""
           echo "=========== OUTPUTS ==========="
 
-          find out/arch/arm64/boot \
+          find \
+            out/arch/arm64/boot \
             -maxdepth 1 \
             -type f \
             -ls
@@ -318,7 +440,7 @@ jobs:
           echo "==============================="
 
       ###############################################################
-      # Verify Kernel Build
+      # Verify Kernel
       ###############################################################
 
       - name: Verify Kernel Build
@@ -330,27 +452,25 @@ jobs:
           echo " VERIFY KERNEL"
           echo "=============================================="
 
-          test -f \
-            out/arch/arm64/boot/Image || {
-              echo "ERROR: Image was not generated!"
-              exit 1
-          }
+          if [ ! -f \
+            out/arch/arm64/boot/Image ]; then
+
+            echo "ERROR: Image was not generated!"
+            exit 1
+
+          fi
 
           echo ""
           echo "Kernel Image:"
-          ls -lh out/arch/arm64/boot/Image
 
-          echo ""
-          echo "Kernel modules:"
-          find "$HOME/modules_staging" \
-            -type f \
-            2>/dev/null | head -50 || true
+          ls -lh \
+            out/arch/arm64/boot/Image
 
           echo ""
           echo "[OK] Kernel build successful."
 
       ###############################################################
-      # Prepare RAW Image
+      # Prepare Kernel Images
       ###############################################################
 
       - name: Prepare Kernel Images
@@ -396,7 +516,8 @@ jobs:
             libmagiskboot.so \
             magiskboot
 
-          chmod +x magiskboot
+          chmod +x \
+            magiskboot
 
           ./magiskboot --help || true
 
@@ -409,9 +530,12 @@ jobs:
 
           cd "$HOME"
 
-          if [ ! -f "${{ github.workspace }}/boot_stock.img" ]; then
+          if [ ! -f \
+            "${{ github.workspace }}/boot_stock.img" ]; then
+
             echo "ERROR: boot_stock.img missing."
             exit 1
+
           fi
 
           cp \
@@ -423,7 +547,8 @@ jobs:
           echo "=============================================="
 
           "$HOME/magisk/magiskboot" \
-            unpack -h boot_stock.img
+            unpack -h \
+            boot_stock.img
 
           echo ""
           echo "=============================================="
@@ -431,13 +556,19 @@ jobs:
           echo "=============================================="
 
           if [ ! -f kernel ]; then
+
             echo "ERROR: magiskboot did not extract kernel."
             exit 1
+
           fi
 
-          mv kernel kernel_stock
+          mv \
+            kernel \
+            kernel_stock
 
-          cp "$HOME/Image" kernel
+          cp \
+            "$HOME/Image" \
+            kernel
 
           echo ""
           echo "Stock kernel:"
@@ -453,11 +584,14 @@ jobs:
           echo "=============================================="
 
           "$HOME/magisk/magiskboot" \
-            repack boot_stock.img
+            repack \
+            boot_stock.img
 
           if [ ! -f new-boot.img ]; then
+
             echo "ERROR: new-boot.img was not generated."
             exit 1
+
           fi
 
           mv \
@@ -469,13 +603,14 @@ jobs:
           echo " BOOT IMAGE READY"
           echo "=============================================="
 
-          ls -lh boot_tepuy.img
+          ls -lh \
+            boot_tepuy.img
 
           echo ""
           echo "Boot image generated successfully."
 
       ###############################################################
-      # AnyKernel3 - Compat
+      # Build AnyKernel3 Compat
       ###############################################################
 
       - name: Build Tepuy Compat Zip
@@ -507,11 +642,16 @@ jobs:
             | head -1)
 
           if [ -n "$DTB" ]; then
+
             echo "DTB found:"
             echo "$DTB"
+
             cp "$DTB" dtb
+
           else
+
             echo "WARNING: DTB not found."
+
           fi
 
           zip -r9 \
@@ -521,6 +661,7 @@ jobs:
 
           echo ""
           echo "Compat ZIP:"
+
           ls -lh \
             "$HOME/Tepuy-Kernel-Compat-peridot.zip"
 
