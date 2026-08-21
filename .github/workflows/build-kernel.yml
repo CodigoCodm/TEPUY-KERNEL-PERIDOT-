@@ -157,6 +157,50 @@ jobs:
 
           echo "===== AFTER ====="
           grep -n -C 2 "usbc_mode.counter" "$FILE" || true
+
+                # ==========================================================
+      # FIX MI FP REGULATOR FORMAT WARNING
+      # ==========================================================
+
+      - name: Fix MI FP regulator format warning
+        run: |
+          set -e
+
+          cd "$HOME/kernel-peridot"
+
+          FILE="drivers/input/fingerprint/mi_fp/fp_driver.c"
+
+          if [ ! -f "$FILE" ]; then
+            echo "::error::MI FP driver not found."
+            exit 1
+          fi
+
+          python3 - "$FILE" <<'PY'
+          import sys
+
+          path = sys.argv[1]
+
+          with open(path, "r", encoding="utf-8") as f:
+              data = f.read()
+
+          old = 'pr_err("regulater addr is %d",fp_dev->vreg);'
+          new = 'pr_err("regulater addr is %p", fp_dev->vreg);'
+
+          if old not in data:
+              print("Target MI FP regulator line not found.")
+              sys.exit(1)
+
+          data = data.replace(old, new, 1)
+
+          with open(path, "w", encoding="utf-8") as f:
+              f.write(data)
+
+          print("[OK] MI FP regulator format fixed.")
+          PY
+
+          grep -n -C 2 \
+            'regulater addr is' \
+            "$FILE"
       # ==========================================================
       # VERIFY CONFIGS
       # ==========================================================
