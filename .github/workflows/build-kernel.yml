@@ -759,7 +759,30 @@ jobs:
 
           ls -lh "$HOME/peridot-kernel.tar.gz"
 
-      # ==========================================================
+      - name: Verify generated files
+        if: always()
+        run: |
+          echo "=============================================="
+          echo " GENERATED FILES"
+          echo "=============================================="
+
+          echo ""
+          echo "===== KERNEL ====="
+          ls -lh /home/runner/kernel-peridot/out/arch/arm64/boot/ 2>/dev/null || true
+
+          echo ""
+          echo "===== FINAL ====="
+          ls -lh /home/runner/kernel-peridot/final/ 2>/dev/null || true
+
+          echo ""
+          echo "===== HOME ====="
+          ls -lh \
+            /home/runner/*.img \
+            /home/runner/*.zip \
+            /home/runner/*.tar.gz \
+            2>/dev/null || true
+
+            # ==========================================================
       # ARTIFACTS
       # ==========================================================
 
@@ -768,13 +791,13 @@ jobs:
         with:
           name: Tepuy-Exclusive-8.0-Peridot-${{ github.event.inputs.build_mode }}
           path: |
-           $HOME/kernel-peridot/out/arch/arm64/boot/Image
-            $HOME/kernel-peridot/final/Image
-            $HOME/kernel-peridot/final/Image.gz
-            $HOME/kernel-peridot/out/build.log
-            $HOME/peridot-kernel.tar.gz
-            $HOME/boot_tepuy.img
-            $HOME/Tepuy-Kernel-Compat-peridot.zip
-            $HOME/Tepuy-Kernel-Full-peridot.zip
-            $HOME/Tepuy-GameMode-AutoActivator.zip
+            /home/runner/kernel-peridot/out/arch/arm64/boot/Image
+            /home/runner/kernel-peridot/final/Image
+            /home/runner/kernel-peridot/final/Image.gz
+            /home/runner/kernel-peridot/out/build.log
+            /home/runner/peridot-kernel.tar.gz
+            /home/runner/boot_tepuy.img
+            /home/runner/Tepuy-Kernel-Compat-peridot.zip
+            /home/runner/Tepuy-Kernel-Full-peridot.zip
+            /home/runner/Tepuy-GameMode-AutoActivator.zip
           if-no-files-found: warn
