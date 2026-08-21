@@ -113,6 +113,51 @@ jobs:
           echo "[OK] HWID fixed"
 
       # ==========================================================
+      # FIX FSA4480 FORMAT WARNING
+      # ==========================================================
+
+      - name: Fix FSA4480 format warning
+        run: |
+          set -e
+
+          cd "$HOME/kernel-peridot"
+
+          FILE="drivers/soc/qcom/fsa4480-i2c.c"
+
+          if [ ! -f "$FILE" ]; then
+            echo "::error::FSA4480 source file not found."
+            exit 1
+          fi
+
+          echo "===== BEFORE ====="
+          grep -n -C 2 "usbc_mode.counter" "$FILE" || true
+
+          python3 - "$FILE" <<'PY'
+          import sys
+
+          path = sys.argv[1]
+
+          with open(path, "r", encoding="utf-8") as f:
+              data = f.read()
+
+          old = "usbc mode %ld, expected %d\\n"
+          new = "usbc mode %d, expected %d\\n"
+
+          if old not in data:
+              print("Target format string not found.")
+              sys.exit(1)
+
+          data = data.replace(old, new, 1)
+
+          with open(path, "w", encoding="utf-8") as f:
+              f.write(data)
+
+          print("[OK] FSA4480 format fixed.")
+          PY
+
+          echo "===== AFTER ====="
+          grep -n -C 2 "usbc_mode.counter" "$FILE" || true
+      # ==========================================================
       # VERIFY CONFIGS
       # ==========================================================
 
