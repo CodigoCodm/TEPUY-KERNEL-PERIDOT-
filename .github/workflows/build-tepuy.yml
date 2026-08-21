@@ -147,15 +147,16 @@ jobs:
 
             echo "[OK] HWID Kconfig exists"
 
-          elif [ -f "$MISC_KCONFIG" ] && \
-               grep -q 'source "drivers/misc/hwid/Kconfig"' "$MISC_KCONFIG"; then
+          elif [ -f "$MISC_KCONFIG" ]; then
 
-            echo "[WARNING] Missing HWID Kconfig reference detected"
+            if grep -q 'source "drivers/misc/hwid/Kconfig"' "$MISC_KCONFIG"; then
 
-            cp "$MISC_KCONFIG" \
-              "$MISC_KCONFIG.tepuy-hwid.bak"
+              echo "[WARNING] Missing HWID Kconfig reference detected"
 
-            python3 - "$MISC_KCONFIG" <<'PY'
+              cp "$MISC_KCONFIG" \
+                "$MISC_KCONFIG.tepuy-hwid.bak"
+
+              python3 - "$MISC_KCONFIG" <<'PY'
 import sys
 
 path = sys.argv[1]
@@ -173,11 +174,17 @@ with open(path, "w", encoding="utf-8") as f:
     f.write(data)
 PY
 
-            echo "[OK] Dangling HWID reference disabled"
+              echo "[OK] Dangling HWID reference disabled"
+
+            else
+
+              echo "[OK] No dangling HWID reference"
+
+            fi
 
           else
 
-            echo "[OK] No dangling HWID reference"
+            echo "[OK] No misc Kconfig found"
 
           fi
 
