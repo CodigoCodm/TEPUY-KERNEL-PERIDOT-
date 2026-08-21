@@ -152,7 +152,7 @@ jobs:
     # BUILD KERNEL (TEPUY EXCLUSIVE 8.0)
     # ==========================================================
 
-    - name: Configure Peridot Kernel
+       - name: Configure Peridot Kernel
       run: |
         set -eo pipefail
 
@@ -189,9 +189,14 @@ jobs:
         make O=out gki_defconfig
 
         echo "===== Apply vendor/peridot_GKI.config ====="
-        cat arch/arm64/configs/vendor/peridot_GKI.config >> out/.config
 
-        yes "" | make O=out oldconfig
+        cat \
+          arch/arm64/configs/vendor/peridot_GKI.config \
+          >> out/.config
+
+        echo "===== Resolve configuration ====="
+
+        make O=out olddefconfig
 
         echo "===== Important configs ====="
 
@@ -199,6 +204,13 @@ jobs:
         grep "^CONFIG_CPU_FREQ=" out/.config || true
         grep "^CONFIG_THERMAL=" out/.config || true
         grep "^CONFIG_SYSFS=" out/.config || true
+
+        echo ""
+        echo "===== CONFIG COMPLETE ====="
+
+        test -s out/.config
+
+        echo "[OK] .config generado correctamente."
 
     # ==========================================================
     # COMPILE KERNEL
