@@ -156,23 +156,9 @@ jobs:
               cp "$MISC_KCONFIG" \
                 "$MISC_KCONFIG.tepuy-hwid.bak"
 
-              python3 - "$MISC_KCONFIG" <<'PY'
-import sys
-
-path = sys.argv[1]
-
-with open(path, "r", encoding="utf-8") as f:
-    data = f.read()
-
-old = 'source "drivers/misc/hwid/Kconfig"'
-new = '# ' + old + '  # unavailable in peridot-u-oss'
-
-if old in data:
-    data = data.replace(old, new, 1)
-
-with open(path, "w", encoding="utf-8") as f:
-    f.write(data)
-PY
+              sed -i \
+                's|^[[:space:]]*source "drivers/misc/hwid/Kconfig"|# source "drivers/misc/hwid/Kconfig"  # unavailable in peridot-u-oss|' \
+                "$MISC_KCONFIG"
 
               echo "[OK] Dangling HWID reference disabled"
 
