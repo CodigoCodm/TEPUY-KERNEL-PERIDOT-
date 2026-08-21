@@ -1,4 +1,4 @@
-name: TEPUY Peridot - Xiaomi Build Environment
+name: TEPUY Peridot - Kleaf Base Kernel
 
 on:
   workflow_dispatch:
@@ -8,15 +8,16 @@ permissions:
 
 jobs:
   build:
-    name: Prepare Xiaomi Peridot Build
+    name: Build Xiaomi Peridot Base Kernel
     runs-on: ubuntu-22.04
-    timeout-minutes: 300
+    timeout-minutes: 240
 
     env:
       ARCH: arm64
       SUBARCH: arm64
       KBUILD_BUILD_USER: Codigocodm
       KBUILD_BUILD_HOST: TEPUY
+      USE_BAZEL_VERSION: 6.5.0
 
     steps:
 
@@ -25,15 +26,77 @@ jobs:
       # ============================================================
 
       - name: Checkout TEPUY
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
+        uses: actions/checkout@v4
 
       # ============================================================
-      # 2. DEPENDENCIAS
+      # 2. INFORMACION DEL REPOSITORIO
       # ============================================================
 
-      - name: Install dependencies
+      - name: Inspect repository
+        shell: bash
+        run: |
+          set -eux
+
+          echo "=========================================="
+          echo "TEPUY REPOSITORY"
+          echo "=========================================="
+
+          pwd
+
+          echo ""
+          echo "Top level:"
+          find . -maxdepth 2 -type f | sort | head -300
+
+          echo ""
+          echo "Kernel:"
+          ls -lah kernel
+
+          echo ""
+          echo "Git:"
+          cd kernel
+          git branch --show-current || true
+          git rev-parse HEAD || true
+
+      # ============================================================
+      # 3. VERIFICAR KLEAF
+      # ============================================================
+
+      - name: Verify Kleaf tree
+        shell: bash
+        run: |
+          set -eux
+
+          cd kernel
+
+          echo "=========================================="
+          echo "KLEAF CHECK"
+          echo "=========================================="
+
+          test -f BUILD.bazel
+
+          echo "[OK] BUILD.bazel"
+
+          if [ -d build/kernel/kleaf ]; then
+            echo "[OK] build/kernel/kleaf"
+          else
+            echo "[ERROR] build/kernel/kleaf not found"
+            exit 1
+          fi
+
+          echo ""
+          echo "Kleaf files:"
+          find build/kernel/kleaf \
+            -maxdepth 2 \
+            -type f \
+            | sort \
+            | head -200
+
+      # ============================================================
+      # 4. DEPENDENCIAS
+      # ============================================================
+
+      - name: Install build dependencies
+        shell: bash
         run: |
           set -eux
 
@@ -45,8 +108,8 @@ jobs:
             build-essential \
             ccache \
             clang \
-            curl \
             flex \
+            gcc-aarch64-linux-gnu \
             git \
             libelf-dev \
             libssl-dev \
@@ -55,319 +118,17 @@ jobs:
             make \
             pahole \
             python3 \
-            python3-pip \
             rsync \
             unzip \
             wget \
             zip
 
       # ============================================================
-      # 3. XIAOMI KERNEL
+      # 5. BAZEL / BAZELISK
       # ============================================================
 
-      - name: Clone Xiaomi Peridot kernel
-        run: |
-          set -eux
-
-          git clone \
-            --depth=1 \
-            --branch peridot-u-oss \
-            https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git \
-            kernel
-
-          cd kernel
-
-          echo "=========================================="
-          echo "PERIDOT KERNEL"
-          echo "=========================================="
-
-          git branch --show-current
-          git rev-parse HEAD
-
-            # ============================================================
-            # ============================================================
-           # ============================================================
-      
-      # 4. ANALIZAR DEPENDENCIAS DEL ARBOL PERIDOT
-      # ============================================================
-
-      - name: Analyze Peridot build dependencies
-        run: |
-          set -eux
-
-          echo "=========================================="
-          echo "PERIDOT BUILD DEPENDENCY ANALYSIS"
-          echo "=========================================="
-
-          echo ""
-          echo "ROOT:"
-          pwd
-
-          echo ""
-          echo "=========================================="
-          echo "SEARCH build.config.msm.pineapple"
-          echo "=========================================="
-
-          find . \
-            -type f \
-            -name 'build.config.msm.pineapple' \
-            -print \
-            2>/dev/null \
-            || true
-
-          echo ""
-          echo "=========================================="
-          echo "SEARCH ALL PINEAPPLE FILES"
-          echo "=========================================="
-
-          find . \
-            -type f \
-            \( \
-              -iname '*pineapple*' \
-              -o -iname '*msm*config*' \
-            \) \
-            | sort \
-            | head -500
-
-          echo ""
-          echo "=========================================="
-          echo "SEARCH build.config REFERENCES"
-          echo "=========================================="
-
-          grep -RIn \
-            "build.config.msm.pineapple" \
-            kernel \
-            --exclude-dir=.git \
-            2>/dev/null \
-            | head -200 \
-            || true
-
-          echo ""
-          echo "=========================================="
-          echo "SEARCH ROOT_DIR/msm-kernel"
-          echo "=========================================="
-
-          grep -RIn \
-            "ROOT_DIR.*msm-kernel" \
-            kernel \
-            --exclude-dir=.git \
-            2>/dev/null \
-            | head -200 \
-            || true
-
-          echo ""
-          echo "=========================================="
-          echo "GIT SUBMODULES"
-          echo "=========================================="
-
-          cd kernel
-
-          git submodule status || true
-
-          echo ""
-          echo "Submodule configuration:"
-          cat .gitmodules 2>/dev/null || echo "No .gitmodules"
-
-          echo ""
-          echo "=========================================="
-          echo "BUILD BAZEL"
-          echo "=========================================="
-
-          sed -n '1,320p' BUILD.bazel
-
-          echo ""
-          echo "=========================================="
-          echo "BUILD CONFIGS"
-          echo "=========================================="
-
-          for f in \
-            build.config.common \
-            build.config.msm.common \
-            build.config.msm.pineapple \
-            build.config.msm.peridot \
-            build.config.gki
-          do
-            if [ -f "$f" ]; then
-              echo ""
-              echo "===== $f ====="
-              cat "$f"
-            fi
-          done
-      # ============================================================
-      # 5. COMPROBAR BUILD CONFIG
-      # ============================================================
-
-      - name: Inspect Peridot build config
-        run: |
-          set -eux
-
-          echo "ROOT:"
-          pwd
-
-          echo ""
-          echo "Directory tree:"
-          find . \
-            -maxdepth 2 \
-            -type d \
-            | sort
-
-          echo ""
-          echo "Peridot config:"
-          cat kernel/build.config.msm.peridot
-
-      # ============================================================
-      # 6. COMPROBAR DEPENDENCIA MSM-KERNEL
-      # ============================================================
-
-      - name: Verify MSM kernel dependency
-        run: |
-          set -eux
-
-          test -f kernel/build.config.msm.peridot
-
-          echo "Checking required inherited config..."
-
-          if [ -f msm-kernel/build.config.msm.pineapple ]; then
-            echo "[OK] msm-kernel/build.config.msm.pineapple"
-          else
-            echo "[ERROR] msm-kernel/build.config.msm.pineapple NOT FOUND"
-
-            echo ""
-            echo "Available msm-kernel configs:"
-            find msm-kernel \
-              -type f \
-              -name 'build.config*' \
-              | sort
-
-            exit 1
-          fi
-
-      # ============================================================
-      # 7. CREAR ROOT_DIR
-      # ============================================================
-
-      - name: Export Xiaomi build environment
-        run: |
-          set -eux
-
-          echo "ROOT_DIR=$PWD" >> "$GITHUB_ENV"
-
-          echo "KERNEL_DIR=kernel" >> "$GITHUB_ENV"
-
-          echo "=========================================="
-          echo "BUILD ENVIRONMENT"
-          echo "=========================================="
-
-          echo "ROOT_DIR=$PWD"
-          echo "KERNEL_DIR=kernel"
-
-      # ============================================================
-      # 8. SOURCE BUILD CONFIG
-      # ============================================================
-
-      - name: Load Peridot build configuration
-        run: |
-          set -eux
-
-          export ROOT_DIR="$PWD"
-          export KERNEL_DIR=kernel
-
-          cd kernel
-
-          echo "=========================================="
-          echo "LOADING PERIDOT CONFIG"
-          echo "=========================================="
-
-          source ./build.config.msm.peridot
-
-          echo ""
-          echo "=========================================="
-          echo "EXPORTED VARIABLES"
-          echo "=========================================="
-
-          env | grep -E \
-            '^(ROOT_DIR|KERNEL_DIR|MSM_|BUILD_|DEFCONFIG|ARCH|SUBARCH|OUT_DIR|BRANCH|VARIANT|LLVM|CLANG)' \
-            | sort \
-            || true
-
-      # ============================================================
-      # 9. INSPECCIONAR MSM-KERNEL
-      # ============================================================
-
-      - name: Inspect inherited build system
-        run: |
-          set -eux
-
-          echo "=========================================="
-          echo "MSM-KERNEL BUILD SYSTEM"
-          echo "=========================================="
-
-          echo ""
-          echo "Build configs:"
-          find msm-kernel \
-            -type f \
-            -name 'build.config*' \
-            | sort
-
-          echo ""
-          echo "Shell scripts:"
-          find msm-kernel \
-            -type f \
-            -name '*.sh' \
-            | sort
-
-          echo ""
-          echo "Bazel files:"
-          find msm-kernel \
-            -type f \
-            \( \
-              -name 'BUILD.bazel' \
-              -o -name '.bazelrc*' \
-              -o -name '*.bzl' \
-            \) \
-            | sort
-
-      # ============================================================
-      # 10. BUSCAR BUILD.SH GLOBAL
-      # ============================================================
-
-      - name: Locate build entry point
-        run: |
-          set -eux
-
-          echo "=========================================="
-          echo "BUILD ENTRY POINTS"
-          echo "=========================================="
-
-          find . \
-            -type f \
-            \( \
-              -name 'build.sh' \
-              -o -name 'build/build.sh' \
-              -o -name 'build.sh.inc' \
-            \) \
-            | sort
-
-          echo ""
-          echo "Files referencing build.config.msm.pineapple:"
-
-          grep -Ril \
-            "build.config.msm.pineapple" \
-            . \
-            --include='*.sh' \
-            --include='*.py' \
-            --include='*.mk' \
-            --include='BUILD*' \
-            2>/dev/null \
-            | sort \
-            | head -100 \
-            || true
-
-      # ============================================================
-      # 11. BAZEL INFORMATION
-      # ============================================================
-
-      - name: Inspect Bazel
+      - name: Check Bazel
+        shell: bash
         run: |
           set -eux
 
@@ -375,72 +136,334 @@ jobs:
           echo "BAZEL"
           echo "=========================================="
 
+          command -v bazel || true
+          command -v bazelisk || true
+
           bazel --version || true
           bazelisk --version || true
 
-          cd kernel
-
-          echo ""
-          echo "Kernel BUILD.bazel:"
-          test -f BUILD.bazel
-
-          sed -n '1,260p' BUILD.bazel
-
       # ============================================================
-      # 12. SEARCH KERNEL TARGETS
+      # 6. CCACHE
       # ============================================================
 
-      - name: Search kernel Bazel targets
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: peridot-kleaf
+          max-size: 5G
+
+      # ============================================================
+      # 7. ANALIZAR TARGETS PERIDOT
+      # ============================================================
+
+      - name: Analyze Peridot targets
+        shell: bash
         run: |
           set -eux
 
           cd kernel
 
           echo "=========================================="
-          echo "BAZEL TARGET SEARCH"
+          echo "PERIDOT TARGET ANALYSIS"
           echo "=========================================="
 
-          bazel query \
-            'kind(".*rule", //...)' \
+          echo ""
+          echo "Peridot files:"
+          find . \
+            -type f \
+            \( \
+              -iname '*peridot*' \
+              -o -iname '*pineapple*' \
+            \) \
+            | sort \
+            | head -500
+
+          echo ""
+          echo "Peridot references in BUILD files:"
+
+          grep -RIn \
+            "peridot" \
+            . \
+            --include='BUILD' \
+            --include='BUILD.bazel' \
+            --include='*.bzl' \
             2>/dev/null \
-            | grep -Ei \
-              'kernel|peridot|msm|image' \
-            | head -200 \
+            | head -300 \
             || true
 
       # ============================================================
-      # 13. CREATE OUTPUT
+      # 8. BAZEL QUERY
       # ============================================================
 
-      - name: Prepare output
+      - name: Query Bazel targets
+        shell: bash
+        run: |
+          set -eo pipefail
+
+          cd kernel
+
+          echo "=========================================="
+          echo "BAZEL TARGETS"
+          echo "=========================================="
+
+          bazel query \
+            'kind("kernel_.*", //...)' \
+            2>&1 \
+            | tee ../bazel-targets.log \
+            || true
+
+          echo ""
+          echo "Searching peridot targets:"
+
+          bazel query \
+            'attr("name", ".*peridot.*", //...)' \
+            2>&1 \
+            | tee ../bazel-peridot-targets.log \
+            || true
+
+      # ============================================================
+      # 9. IDENTIFICAR TARGET PERIDOT
+      # ============================================================
+
+      - name: Detect Peridot Bazel target
+        shell: bash
         run: |
           set -eux
 
-          mkdir -p out
+          cd kernel
 
-          {
-            echo "TEPUY PERIDOT"
-            echo "XIAOMI BUILD ENVIRONMENT"
-            echo "================================"
+          echo "=========================================="
+          echo "DETECTING PERIDOT TARGET"
+          echo "=========================================="
+
+          TARGETS="$(bazel query \
+            'attr("name", ".*peridot.*", //...)' \
+            2>/dev/null \
+            | grep -E 'kernel|peridot' \
+            | head -50 || true)"
+
+          echo "$TARGETS"
+
+          if [ -z "$TARGETS" ]; then
             echo ""
-            echo "Kernel commit:"
-            git -C kernel rev-parse HEAD
-            echo ""
-            echo "kernel_build commit:"
-            git -C msm-kernel rev-parse HEAD
-          } > out/build-info.txt
+            echo "[INFO] No direct peridot Bazel target found."
+            echo "[INFO] Searching device configuration files."
+
+            grep -RIl \
+              "peridot" \
+              . \
+              --include='BUILD' \
+              --include='BUILD.bazel' \
+              --include='*.bzl' \
+              2>/dev/null \
+              | sort \
+              | head -100 \
+              || true
+          fi
+
+          echo "$TARGETS" > ../detected-peridot-targets.txt
 
       # ============================================================
-      # 14. UPLOAD DIAGNOSTIC ARTIFACT
+      # 10. MOSTRAR CONFIGURACION XIAOMI
       # ============================================================
 
-      - name: Upload build diagnostics
-        uses: actions/upload-artifact@v5
+      - name: Inspect Xiaomi configuration
+        shell: bash
+        run: |
+          set -eux
+
+          cd kernel
+
+          echo "=========================================="
+          echo "XIAOMI CONFIGURATION"
+          echo "=========================================="
+
+          echo ""
+          echo "build.config.msm.peridot:"
+          cat build.config.msm.peridot
+
+          echo ""
+          echo "build.config.msm.pineapple:"
+          cat build.config.msm.pineapple
+
+          echo ""
+          echo "Peridot defconfigs:"
+
+          find arch/arm64/configs \
+            -type f \
+            \( \
+              -iname '*peridot*' \
+              -o -iname '*gki*' \
+            \) \
+            | sort \
+            | head -200
+
+      # ============================================================
+      # 11. BUILD KLEAF
+      # ============================================================
+
+      - name: Build kernel with Kleaf
+        shell: bash
+        run: |
+          set -eo pipefail
+
+          cd kernel
+
+          echo "=========================================="
+          echo "RUNNING KLEAF"
+          echo "=========================================="
+
+          if [ -s ../detected-peridot-targets.txt ]; then
+
+            TARGET="$(head -1 ../detected-peridot-targets.txt)"
+
+            echo "Detected target:"
+            echo "$TARGET"
+
+            echo ""
+            echo "Building:"
+            echo "$TARGET"
+
+            bazel build \
+              --config=fast \
+              "$TARGET" \
+              2>&1 | tee ../kleaf-build.log
+
+          else
+
+            echo "[ERROR] No Peridot Bazel target detected."
+            echo ""
+            echo "Available kernel targets:"
+            cat ../bazel-targets.log || true
+            echo ""
+            echo "Available Peridot targets:"
+            cat ../bazel-peridot-targets.log || true
+
+            exit 1
+
+          fi
+
+      # ============================================================
+      # 12. BUSCAR IMAGE
+      # ============================================================
+
+      - name: Locate kernel Image
+        shell: bash
+        run: |
+          set -eux
+
+          cd kernel
+
+          echo "=========================================="
+          echo "SEARCHING KERNEL IMAGE"
+          echo "=========================================="
+
+          find bazel-bin \
+            -type f \
+            \( \
+              -name 'Image' \
+              -o -name 'Image.lz4' \
+              -o -name 'Image.gz' \
+            \) \
+            -print \
+            2>/dev/null \
+            | sort \
+            | tee ../kernel-images.txt
+
+          if ! grep -q . ../kernel-images.txt; then
+            echo "::error::No kernel Image generated"
+            exit 1
+          fi
+
+      # ============================================================
+      # 13. VALIDAR IMAGE
+      # ============================================================
+
+      - name: Validate kernel Image
+        shell: bash
+        run: |
+          set -eux
+
+          IMAGE="$(grep '/Image$' kernel-images.txt | head -1)"
+
+          if [ -z "$IMAGE" ]; then
+            IMAGE="$(grep -E '/Image\.(lz4|gz)$' kernel-images.txt | head -1)"
+          fi
+
+          test -n "$IMAGE"
+          test -f "kernel/$IMAGE"
+
+          echo "Image:"
+          echo "$IMAGE"
+
+          ls -lh "kernel/$IMAGE"
+
+          SIZE="$(stat -c%s "kernel/$IMAGE")"
+
+          echo "Image size: $SIZE bytes"
+
+          if [ "$SIZE" -lt 2000000 ]; then
+            echo "::error::Kernel Image suspiciously small"
+            exit 1
+          fi
+
+      # ============================================================
+      # 14. GUARDAR ARTIFACTS
+      # ============================================================
+
+      - name: Collect build artifacts
+        if: always()
+        shell: bash
+        run: |
+          set +e
+
+          mkdir -p artifacts
+
+          cp \
+            bazel-targets.log \
+            artifacts/ \
+            2>/dev/null
+
+          cp \
+            bazel-peridot-targets.log \
+            artifacts/ \
+            2>/dev/null
+
+          cp \
+            detected-peridot-targets.txt \
+            artifacts/ \
+            2>/dev/null
+
+          cp \
+            kernel-images.txt \
+            artifacts/ \
+            2>/dev/null
+
+          cp \
+            kleaf-build.log \
+            artifacts/ \
+            2>/dev/null
+
+          cp \
+            kernel/out/.config \
+            artifacts/defconfig-final \
+            2>/dev/null
+
+          echo "Artifacts:"
+          find artifacts -type f -maxdepth 2 -ls
+
+      # ============================================================
+      # 15. SUBIR ARTIFACTS
+      # ============================================================
+
+      - name: Upload build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: Tepuy-Peridot-Xiaomi-Build-Diagnostics
-          if-no-files-found: error
+          name: Tepuy-Peridot-Kleaf-Build
+          if-no-files-found: warn
           path: |
-            out/build-info.txt
-            kernel/build.config.msm.peridot
-            kernel/BUILD.bazel
-            msm-kernel/build.config.msm.pineapple
+            artifacts/
+            kernel/bazel-bin/**/Image
+            kernel/bazel-bin/**/Image.lz4
+            kernel/bazel-bin/**/Image.gz
