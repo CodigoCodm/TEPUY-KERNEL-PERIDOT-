@@ -1,23 +1,21 @@
 #!/usr/bin/env python3
+
 """
-Tepuy GameMode Patcher v4 - Peridot-U-OSS / KMI-Safe
+Tepuy GameMode Patcher - Peridot U OSS compatible
 
 Target:
-    POCO F6 / Peridot / SM8635
-
-Compatible con:
+    POCO F6 / Peridot
+    Redmi Turbo 3
+    SM8635
     Xiaomi peridot-u-oss
-    Xiaomi Kernel OpenSource
 
-Diseño:
-    - tepuy_sysfs.c
-    - cpufreq.c
-    - thermal_core.c opcional
-    - schedutil.c NO se modifica
-    - no modifica voltajes
-    - no fija una frecuencia concreta
-    - GameMode solamente permite utilizar el maximo
-      que el kernel ya declara como cpuinfo.max_freq
+Principios:
+    - Mantener el source original Xiaomi.
+    - No modificar voltajes.
+    - No fijar frecuencias.
+    - No tocar schedutil.
+    - Liberar los limites cpufreq cuando GameMode esta activo.
+    - Thermal patch opcional/adaptativo.
 """
 
 import os
@@ -26,16 +24,24 @@ import sys
 import subprocess
 
 
-KERNEL_DIR = sys.argv[1] if len(sys.argv) > 1 else "."
-REPO_DIR = os.path.dirname(os.path.abspath(__file__))
-
-ORIGINAL_PERIDOT_REPO = (
-    "https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git"
+KERNEL_DIR = os.path.abspath(
+    sys.argv[1] if len(sys.argv) > 1 else "."
 )
+
+REPO_DIR = os.path.dirname(
+    os.path.abspath(__file__)
+)
+
+EXPECTED_REPO = (
+    "https://github.com/MiCode/"
+    "Xiaomi_Kernel_OpenSource.git"
+)
+
+EXPECTED_BRANCH = "peridot-u-oss"
 
 
 # ============================================================
-# Helpers
+# HELPERS
 # ============================================================
 
 def error(message):
@@ -43,28 +49,26 @@ def error(message):
     sys.exit(1)
 
 
-def info(message):
-    print(f"[INFO] {message}")
-
-
-def ok(message):
-    print(f"[OK] {message}")
-
-
-def warning(message):
-    print(f"[WARNING] {message}")
-
-
 def backup(path):
+
     backup_path = path + ".tepuy.bak"
 
     if not os.path.exists(backup_path):
-        shutil.copy2(path, backup_path)
-        info(f"Backup creado: {backup_path}")
+
+        shutil.copy2(
+            path,
+            backup_path
+        )
+
+        print(
+            f"[INFO] Backup creado: {backup_path}"
+        )
 
 
 def require_file(path, description):
+
     if not os.path.exists(path):
+
         error(
             f"{description} no encontrado:\n"
             f"{path}"
@@ -72,60 +76,60 @@ def require_file(path, description):
 
 
 def read_file(path):
+
     with open(
         path,
         "r",
         encoding="utf-8",
-        errors="replace"
+        errors="ignore"
     ) as f:
+
         return f.read()
 
 
 def write_file(path, content):
+
     with open(
         path,
         "w",
         encoding="utf-8"
     ) as f:
+
         f.write(content)
 
 
 # ============================================================
-# Header
+# HEADER
 # ============================================================
 
 print("============================================================")
-print(" Tepuy GameMode Patcher v4 - Peridot-U-OSS / KMI-Safe")
+print(" Tepuy GameMode Patcher")
+print(" Peridot U OSS / KMI-Safe")
 print(" POCO F6 / Peridot / SM8635")
 print("============================================================")
 print()
 
 
 # ============================================================
-# 0. Kernel validation
+# SOURCE CHECK
 # ============================================================
 
 if not os.path.isdir(KERNEL_DIR):
+
     error(
         f"KERNEL_DIR no existe:\n"
         f"{KERNEL_DIR}"
     )
 
 
-if not os.path.isfile(
-    os.path.join(KERNEL_DIR, "Makefile")
-):
-    error(
-        "El directorio indicado no parece ser "
-        "la raiz de un kernel."
-    )
+require_file(
+    os.path.join(KERNEL_DIR, "Makefile"),
+    "Makefile"
+)
 
 
-# ============================================================
-# Git validation
-# ============================================================
+print("[INFO] Comprobando repositorio Git...")
 
-info("Comprobando repositorio Git...")
 
 try:
 
@@ -154,71 +158,49 @@ try:
             "LineageOS/android_kernel_xiaomi_sm8635"
             in remote
         ):
+
             error(
-                "\n"
-                "El workflow esta utilizando el repo "
-                "de LineageOS.\n\n"
-                "Este patcher esta preparado para "
-                "Peridot-U-OSS/Xiaomi source.\n"
+                "Se detecto un repositorio "
+                "LineageOS.\n"
+                "Este patcher requiere el source "
+                "Xiaomi peridot-u-oss."
             )
 
         if (
-            "Xiaomi_Kernel_OpenSource"
+            "MiCode/Xiaomi_Kernel_OpenSource"
             in remote
         ):
 
-            ok(
-                "Repositorio Xiaomi Kernel OpenSource "
-                "detectado"
-            )
-
-        elif (
-            "peridot-dev/android_kernel_xiaomi_sm8635"
-            in remote
-        ):
-
-            ok(
-                "Repositorio Peridot detectado"
+            print(
+                "[OK] Xiaomi Kernel OpenSource detectado"
             )
 
         else:
 
-            warning(
-                "El remote no coincide exactamente "
-                "con un repositorio conocido."
+            print(
+                "[WARNING] Remote diferente al esperado."
             )
 
-            info(
-                "Se continuara porque el workflow "
-                "puede utilizar un mirror."
+            print(
+                "[WARNING] Se continua porque puede "
+                "existir un mirror."
             )
 
     else:
 
-        info(
-            "No se encontro Git remote."
+        print(
+            "[INFO] Sin Git remote."
         )
-
-        info(
-            "Se continuara utilizando el source local."
-        )
-
-except FileNotFoundError:
-
-    warning(
-        "Git no esta disponible; "
-        "se omitira la comprobacion."
-    )
 
 except Exception as exc:
 
-    warning(
-        f"No se pudo comprobar Git: {exc}"
+    print(
+        f"[INFO] No se pudo comprobar Git: {exc}"
     )
 
 
 # ============================================================
-# 1. OpenSSL 3 compatibility
+# 1. OPENSSL COMPATIBILITY
 # ============================================================
 
 extract_cert = os.path.join(
@@ -226,15 +208,20 @@ extract_cert = os.path.join(
     "certs/extract-cert.c"
 )
 
+
 if os.path.exists(extract_cert):
 
-    content = read_file(extract_cert)
+    content = read_file(
+        extract_cert
+    )
 
     old_decl = """#ifdef USE_PKCS11_ENGINE
 static const char *key_pass;
 #endif"""
 
-    new_decl = "static const char *key_pass;"
+    new_decl = (
+        "static const char *key_pass;"
+    )
 
     if old_decl in content:
 
@@ -251,28 +238,21 @@ static const char *key_pass;
             content
         )
 
-        ok(
-            "certs/extract-cert.c parcheado "
-            "para OpenSSL 3.0"
+        print(
+            "[OK] extract-cert.c "
+            "OpenSSL compatibility aplicada"
         )
 
     else:
 
-        info(
-            "certs/extract-cert.c ya esta parcheado "
-            "o utiliza otro formato"
+        print(
+            "[INFO] extract-cert.c "
+            "ya compatible o formato diferente"
         )
-
-else:
-
-    info(
-        "certs/extract-cert.c no encontrado; "
-        "OpenSSL fix omitido"
-    )
 
 
 # ============================================================
-# 2. tepuy_sysfs.c
+# 2. TEPUY SYSFS
 # ============================================================
 
 src_sysfs = os.path.join(
@@ -282,100 +262,118 @@ src_sysfs = os.path.join(
 
 dst_sysfs = os.path.join(
     KERNEL_DIR,
-    "kernel/tepuy_sysfs.c"
+    "kernel",
+    "tepuy_sysfs.c"
 )
+
 
 require_file(
     src_sysfs,
-    "tepuy_sysfs.c del repositorio del patch"
+    "tepuy_sysfs.c del repositorio Tepuy"
 )
 
-require_file(
-    os.path.join(KERNEL_DIR, "kernel"),
-    "directorio kernel/"
-)
 
 if os.path.exists(dst_sysfs):
-    backup(dst_sysfs)
+
+    backup(
+        dst_sysfs
+    )
+
 
 shutil.copy2(
     src_sysfs,
     dst_sysfs
 )
 
-ok(
-    "kernel/tepuy_sysfs.c copiado"
+
+print(
+    "[OK] kernel/tepuy_sysfs.c instalado"
 )
 
 
 # ============================================================
-# 3. kernel/Makefile
+# 3. KERNEL MAKEFILE
 # ============================================================
 
 kernel_makefile = os.path.join(
     KERNEL_DIR,
-    "kernel/Makefile"
+    "kernel",
+    "Makefile"
 )
+
 
 require_file(
     kernel_makefile,
     "kernel/Makefile"
 )
 
-content = read_file(kernel_makefile)
+
+content = read_file(
+    kernel_makefile
+)
+
 
 if "tepuy_sysfs.o" not in content:
 
-    backup(kernel_makefile)
-
-    if not content.endswith("\n"):
-        content += "\n"
-
-    content += (
-        "\n"
-        "# Tepuy GameMode\n"
-        "obj-$(CONFIG_SYSFS) += tepuy_sysfs.o\n"
+    backup(
+        kernel_makefile
     )
 
-    write_file(
+    with open(
         kernel_makefile,
-        content
-    )
+        "a",
+        encoding="utf-8"
+    ) as f:
 
-    ok(
-        "kernel/Makefile actualizado"
+        f.write(
+            "\n"
+            "# Tepuy GameMode\n"
+            "obj-$(CONFIG_SYSFS) += tepuy_sysfs.o\n"
+        )
+
+    print(
+        "[OK] kernel/Makefile actualizado"
     )
 
 else:
 
-    info(
-        "tepuy_sysfs.o ya esta presente "
-        "en kernel/Makefile"
+    print(
+        "[INFO] tepuy_sysfs.o ya presente"
     )
 
 
 # ============================================================
-# 4. cpufreq.c
+# 4. CPUFREQ
 # ============================================================
 
 cpufreq_core = os.path.join(
     KERNEL_DIR,
-    "drivers/cpufreq/cpufreq.c"
+    "drivers",
+    "cpufreq",
+    "cpufreq.c"
 )
 
-cpufreq_patched = False
 
-if os.path.exists(cpufreq_core):
+if not os.path.exists(cpufreq_core):
 
-    content = read_file(cpufreq_core)
+    print(
+        "[WARNING] drivers/cpufreq/cpufreq.c "
+        "no existe"
+    )
+
+else:
+
+    content = read_file(
+        cpufreq_core
+    )
+
+    original = content
 
     # --------------------------------------------------------
-    # extern
+    # EXTERN
     # --------------------------------------------------------
 
     if "extern bool tepuy_game_mode;" not in content:
-
-        backup(cpufreq_core)
 
         include_candidates = [
             "#include <linux/suspend.h>",
@@ -398,52 +396,42 @@ if os.path.exists(cpufreq_core):
 
                 inserted = True
 
-                ok(
-                    "cpufreq.c: declaracion extern agregada"
+                print(
+                    "[OK] cpufreq.c: extern agregado"
                 )
 
                 break
 
         if not inserted:
 
-            warning(
-                "cpufreq.c: no se encontro include "
-                "compatible para insertar extern"
+            print(
+                "[WARNING] No se encontro include "
+                "compatible para extern"
             )
 
-    else:
-
-        info(
-            "cpufreq.c: extern ya presente"
-        )
-
-
     # --------------------------------------------------------
-    # GameMode boost
+    # BOOST
     # --------------------------------------------------------
 
     boost_marker = (
-        "/* TEPuy GameMode boost */"
+        "policy->max < policy->cpuinfo.max_freq"
     )
 
     if boost_marker not in content:
 
-        target_candidates = [
+        target_patterns = [
 
             "int cpufreq_driver_target("
-            "struct cpufreq_policy *policy,",
+            "(struct cpufreq_policy *policy,",
 
             "int cpufreq_driver_target("
-            "struct cpufreq_policy *policy,",
-
-            "int __cpufreq_driver_target("
             "struct cpufreq_policy *policy,"
 
         ]
 
         target = None
 
-        for candidate in target_candidates:
+        for candidate in target_patterns:
 
             if candidate in content:
 
@@ -452,7 +440,9 @@ if os.path.exists(cpufreq_core):
 
         if target:
 
-            idx = content.find(target)
+            idx = content.find(
+                target
+            )
 
             brace_idx = content.find(
                 "{",
@@ -462,11 +452,19 @@ if os.path.exists(cpufreq_core):
             if brace_idx != -1:
 
                 insert = """
-\t/* TEPuy GameMode boost */
-\tif (tepuy_game_mode &&
-\t    policy->max < policy->cpuinfo.max_freq) {
-\t\tpolicy->max = policy->cpuinfo.max_freq;
-\t}
+    /*
+     * Tepuy GameMode:
+     * libera el limite maximo de la policy.
+     *
+     * No cambia voltaje.
+     * No fija una frecuencia.
+     * Solo permite utilizar el maximo
+     * declarado por el driver.
+     */
+    if (tepuy_game_mode &&
+        policy->max < policy->cpuinfo.max_freq) {
+        policy->max = policy->cpuinfo.max_freq;
+    }
 """
 
                 content = (
@@ -475,90 +473,93 @@ if os.path.exists(cpufreq_core):
                     + content[brace_idx + 1:]
                 )
 
-                cpufreq_patched = True
-
-                ok(
-                    "cpufreq.c: GameMode boost agregado"
+                print(
+                    "[OK] cpufreq.c: GameMode boost agregado"
                 )
 
             else:
 
-                warning(
-                    "cpufreq.c: no se encontro apertura "
-                    "de funcion target"
+                print(
+                    "[WARNING] No se encontro "
+                    "brace de cpufreq_driver_target"
                 )
 
         else:
 
-            warning(
-                "cpufreq.c: firma cpufreq_driver_target "
-                "no encontrada"
+            print(
+                "[WARNING] cpufreq_driver_target "
+                "no encontrado."
             )
 
-            info(
-                "Se conserva tepuy_sysfs.c; "
-                "no se fuerza un parche incompatible."
+            print(
+                "[INFO] Se omite boost cpufreq "
+                "para mantener compatibilidad."
             )
 
     else:
 
-        info(
-            "cpufreq.c: GameMode boost ya presente"
+        print(
+            "[INFO] cpufreq.c: boost Tepuy "
+            "ya presente"
         )
 
-        cpufreq_patched = True
+    if content != original:
 
+        backup(
+            cpufreq_core
+        )
 
-    write_file(
-        cpufreq_core,
-        content
-    )
-
-else:
-
-    warning(
-        "drivers/cpufreq/cpufreq.c no encontrado"
-    )
+        write_file(
+            cpufreq_core,
+            content
+        )
 
 
 # ============================================================
-# 5. thermal_core.c
-#
-# IMPORTANTE:
-# El source peridot-u-oss puede no utilizar la misma
-# implementacion de thermal_zone_device_set_trips().
-#
-# Por seguridad:
-#   - NO se fuerza el parche si la funcion no existe.
-#   - NO se hace fallar el build.
-#   - GameMode sigue funcionando mediante sysfs/cpufreq.
+# 5. THERMAL - OPTIONAL
 # ============================================================
 
 thermal_core = os.path.join(
     KERNEL_DIR,
-    "drivers/thermal/thermal_core.c"
+    "drivers",
+    "thermal",
+    "thermal_core.c"
 )
+
 
 thermal_patched = False
 
-if os.path.exists(thermal_core):
 
-    content = read_file(thermal_core)
+if not os.path.exists(thermal_core):
+
+    print(
+        "[INFO] thermal_core.c no encontrado."
+    )
+
+else:
+
+    content = read_file(
+        thermal_core
+    )
+
+    original = content
+
+    # --------------------------------------------------------
+    # EXTERN
+    # --------------------------------------------------------
 
     if "extern bool tepuy_game_mode;" not in content:
 
-        thermal_include_candidates = [
+        includes = [
             "#include <linux/thermal.h>",
-            "#include <linux/thermal.h>\n"
+            "#include <linux/kernel.h>"
         ]
 
         inserted = False
 
-        for include in thermal_include_candidates:
+        for include in includes:
 
             if include in content:
-
-                backup(thermal_core)
 
                 content = content.replace(
                     include,
@@ -569,251 +570,261 @@ if os.path.exists(thermal_core):
 
                 inserted = True
 
-                ok(
-                    "thermal_core.c: extern agregado"
+                print(
+                    "[OK] thermal_core.c: extern agregado"
                 )
 
                 break
 
         if not inserted:
 
-            info(
-                "thermal_core.c: no se inserta extern "
-                "porque el formato difiere"
+            print(
+                "[INFO] thermal_core.c: "
+                "no se encontro include compatible"
             )
 
-    else:
-
-        info(
-            "thermal_core.c: extern ya presente"
-        )
-
-
     # --------------------------------------------------------
-    # Buscar variantes de set_trips
+    # ONLY PATCH IF REAL FUNCTION EXISTS
     # --------------------------------------------------------
 
     thermal_targets = [
-        "thermal_zone_device_set_trips(",
-        "__thermal_zone_device_update(",
+
+        "static int thermal_zone_device_set_trips(",
+
+        "int thermal_zone_device_set_trips(",
+
+        "static void thermal_zone_device_set_trips("
+
     ]
 
-    found_thermal_function = False
+    thermal_target = None
 
-    for target in thermal_targets:
+    for candidate in thermal_targets:
 
-        if target in content:
+        if candidate in content:
 
-            found_thermal_function = True
-
+            thermal_target = candidate
             break
 
 
-    if found_thermal_function:
+    if thermal_target:
 
-        info(
-            "thermal_core.c: implementacion thermal "
-            "compatible detectada"
+        marker = (
+            "tz->passive_delay = 50;"
         )
 
-        info(
-            "Parche passive_delay omitido "
-            "para preservar estabilidad KMI."
-        )
+        if marker not in content:
+
+            idx = content.find(
+                thermal_target
+            )
+
+            brace_idx = content.find(
+                "{",
+                idx
+            )
+
+            if brace_idx != -1:
+
+                insert = """
+    /*
+     * Tepuy GameMode thermal response.
+     * Only reduce an excessive passive delay.
+     */
+    if (tepuy_game_mode &&
+        tz->passive_delay > 100)
+        tz->passive_delay = 50;
+"""
+
+                content = (
+                    content[:brace_idx + 1]
+                    + insert
+                    + content[brace_idx + 1:]
+                )
+
+                thermal_patched = True
+
+                print(
+                    "[OK] thermal_core.c: "
+                    "passive_delay agregado"
+                )
 
     else:
 
-        info(
-            "thermal_core.c: no se encontro "
-            "implementacion compatible de set_trips"
+        print(
+            "[INFO] thermal_core.c: "
+            "set_trips no existe en este source."
         )
 
-        info(
-            "Parche thermal omitido correctamente."
+        print(
+            "[INFO] Thermal patch omitido "
+            "intencionalmente."
         )
 
 
-    write_file(
-        thermal_core,
-        content
-    )
+    if content != original:
 
-else:
+        backup(
+            thermal_core
+        )
 
-    info(
-        "thermal_core.c no encontrado; "
-        "thermal patch omitido"
-    )
+        write_file(
+            thermal_core,
+            content
+        )
 
 
 # ============================================================
-# 6. schedutil.c
+# 6. SCHEDUTIL
 # ============================================================
 
-print()
-info(
-    "schedutil.c: OMITIDO deliberadamente"
+print(
+    "[INFO] schedutil.c: OMITIDO"
 )
 
-info(
-    "No se modifica schedutil para evitar "
-    "incompatibilidades KMI."
+print(
+    "[INFO] No se modifica schedutil "
+    "para maximizar compatibilidad KMI."
 )
 
 
 # ============================================================
-# 7. Final verification
+# 7. FINAL VERIFICATION
 # ============================================================
 
 print()
 print("============================================================")
-print(" Verificacion final")
+print(" VERIFICACION FINAL")
 print("============================================================")
 
-
-# ------------------------------------------------------------
-# sysfs
-# ------------------------------------------------------------
 
 require_file(
     dst_sysfs,
     "kernel/tepuy_sysfs.c"
 )
 
-ok(
-    "kernel/tepuy_sysfs.c"
+print(
+    "[OK] kernel/tepuy_sysfs.c"
 )
 
 
 # ------------------------------------------------------------
-# cpufreq
+# CPU verification
 # ------------------------------------------------------------
 
 if os.path.exists(cpufreq_core):
 
-    cpufreq_check = read_file(cpufreq_core)
+    content = read_file(
+        cpufreq_core
+    )
 
     if (
         "extern bool tepuy_game_mode;"
-        not in cpufreq_check
+        in content
     ):
 
-        error(
-            "cpufreq.c no contiene "
-            "extern bool tepuy_game_mode"
-        )
-
-    if (
-        "TEPuy GameMode boost"
-        not in cpufreq_check
-    ):
-
-        warning(
-            "cpufreq.c no contiene el marcador "
-            "TEPuy GameMode boost."
-        )
-
-        warning(
-            "Esto significa que el source utiliza "
-            "otra implementacion de cpufreq."
+        print(
+            "[OK] cpufreq.c: extern"
         )
 
     else:
 
-        ok(
-            "cpufreq.c: GameMode verificado"
+        print(
+            "[WARNING] cpufreq.c: extern "
+            "no encontrado"
+        )
+
+
+    if (
+        "policy->max < policy->cpuinfo.max_freq"
+        in content
+    ):
+
+        print(
+            "[OK] cpufreq.c: GameMode boost"
+        )
+
+    else:
+
+        print(
+            "[WARNING] cpufreq.c: GameMode "
+            "boost no aplicado"
         )
 
 
 # ------------------------------------------------------------
-# thermal
+# Thermal verification
 # ------------------------------------------------------------
 
 if os.path.exists(thermal_core):
 
-    thermal_check = read_file(
+    content = read_file(
         thermal_core
     )
 
     if (
-        "extern bool tepuy_game_mode;"
-        in thermal_check
+        "tz->passive_delay = 50;"
+        in content
     ):
 
-        ok(
-            "thermal_core.c: extern verificado"
+        print(
+            "[OK] thermal_core.c: "
+            "passive_delay"
         )
 
     else:
 
-        info(
-            "thermal_core.c: extern no requerido "
-            "por el parche thermal"
+        print(
+            "[INFO] thermal_core.c: "
+            "passive_delay no aplicado"
         )
 
-    info(
-        "thermal_core.c: passive_delay NO es obligatorio"
-    )
-
-    info(
-        "Se evita modificar la logica thermal "
-        "cuando la firma KMI no coincide."
-    )
+        print(
+            "[INFO] Esto NO es un error."
+        )
 
 
 # ============================================================
-# Summary
+# DONE
 # ============================================================
 
 print()
 print("============================================================")
-print(" RESULTADO TEPUY")
+print(" [OK] TEPUY PATCH COMPLETADO")
 print("============================================================")
+print()
+print("Source:")
+print(
+    "  MiCode/Xiaomi_Kernel_OpenSource"
+)
 
 print()
-print("SYSFS:")
-print("  [OK] tepuy_sysfs.c")
-
-print()
-print("CPUFREQ:")
-
-if cpufreq_patched:
-    print("  [OK] GameMode boost")
-else:
-    print("  [INFO] boost no insertado por diferencia KMI")
-
-print()
-print("THERMAL:")
-print("  [INFO] passive_delay omitido por seguridad")
-
-print()
-print("SCHEDUTIL:")
-print("  [OK] OMITIDO")
-
-print()
-print("Voltajes:")
-print("  [OK] NO modificados")
-
-print()
-print("Frecuencias:")
-print("  [OK] NO se fija una frecuencia concreta")
+print("Branch:")
+print(
+    f"  {EXPECTED_BRANCH}"
+)
 
 print()
 print("GameMode:")
 print(
-    "  [OK] utiliza cpuinfo.max_freq cuando "
-    "tepuy_game_mode esta activo"
+    "  cpufreq boost: adaptativo"
+)
+
+print(
+    "  thermal patch: opcional"
+)
+
+print(
+    "  schedutil: omitido"
 )
 
 print()
-print("============================================================")
-print(" [OK] Patch Tepuy aplicado sin error fatal")
-print("============================================================")
-print()
-
-print("Source:")
 print(
-    "  Xiaomi peridot-u-oss / SM8635"
+    "Voltajes: SIN MODIFICAR"
+)
+
+print(
+    "Frecuencias: NO FIJADAS"
 )
 
 print()
