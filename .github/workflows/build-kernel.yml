@@ -84,27 +84,75 @@ jobs:
           git branch --show-current
           git rev-parse HEAD
 
-      # ============================================================
-      # 4. PREPARAR MSM-KERNEL
+            # ============================================================
+      # 4. LOCATE MSM-KERNEL BUILD TREE
       # ============================================================
 
-      - name: Clone Xiaomi MSM kernel build tree
+      - name: Locate Xiaomi MSM build environment
         run: |
           set -eux
 
+          echo "=========================================="
+          echo "SEARCHING MSM BUILD ENVIRONMENT"
+          echo "=========================================="
+
+          rm -rf msm-kernel
+
+          # --------------------------------------------------------
+          # Primero intentamos el repositorio ACK/MSM utilizado
+          # por los árboles Qualcomm.
+          # --------------------------------------------------------
+
           git clone \
             --depth=1 \
-            https://github.com/MiCode/kernel_build.git \
-            msm-kernel
+            https://android.googlesource.com/kernel/msm \
+            msm-kernel \
+            || true
 
+          if [ -f msm-kernel/build.config.msm.pineapple ]; then
+            echo "[OK] Found build.config.msm.pineapple"
+          else
+            echo "[INFO] Standard MSM repository does not contain it."
+
+            rm -rf msm-kernel
+
+            # ------------------------------------------------------
+            # Intento Qualcomm kernel-build
+            # ------------------------------------------------------
+
+            git clone \
+              --depth=1 \
+              https://github.com/Qualcomm/kernel.git \
+              msm-kernel \
+              || true
+          fi
+
+          echo ""
           echo "=========================================="
-          echo "MSM-KERNEL"
+          echo "SEARCH RESULTS"
           echo "=========================================="
 
-          find msm-kernel \
-            -maxdepth 2 \
-            -type f \
-            | sort
+          if [ -f msm-kernel/build.config.msm.pineapple ]; then
+            echo "[SUCCESS]"
+            echo "Found:"
+            echo "msm-kernel/build.config.msm.pineapple"
+          else
+            echo "[NOT FOUND]"
+            echo ""
+            echo "Repositories tested:"
+            echo "1. android.googlesource.com/kernel/msm"
+            echo "2. github.com/Qualcomm/kernel.git"
+            echo ""
+            echo "Searching recursively:"
+            find msm-kernel \
+              -type f \
+              -name 'build.config.msm.pineapple' \
+              -print \
+              2>/dev/null \
+              || true
+
+            exit 1
+          fi
 
       # ============================================================
       # 5. COMPROBAR BUILD CONFIG
