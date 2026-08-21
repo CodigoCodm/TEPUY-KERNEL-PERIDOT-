@@ -1,446 +1,425 @@
-name: Build Tepuy Kernel - SAFE BOOT
+name: TEPUY Peridot - Base Kernel Test
 
 on:
   workflow_dispatch:
-    inputs:
-      kernel_branch:
-        description: "Rama del kernel fuente"
-        required: true
-        default: "peridot-u-oss"
-        type: string
 
-env:
-  ARCH: arm64
-  SUBARCH: arm64
-  LLVM: "1"
-  LLVM_IAS: "1"
+permissions:
+  contents: read
 
 jobs:
   build:
-    name: SAFE BOOT - Xiaomi peridot
-    runs-on: ubuntu-latest
+    name: Build Peridot Base Kernel
+    runs-on: ubuntu-22.04
     timeout-minutes: 240
+
+    env:
+      ARCH: arm64
+      SUBARCH: arm64
+      LLVM: "1"
+      LLVM_IAS: "1"
+      KBUILD_BUILD_USER: Codigocodm
+      KBUILD_BUILD_HOST: TEPUY
 
     steps:
 
-      # ==========================================================
-      # CHECKOUT TEPUY
-      # ==========================================================
-      - name: Checkout Tepuy repository
+      # ============================================================
+      # 1. CHECKOUT TEPUY REPOSITORY
+      # ============================================================
+
+      - name: Checkout TEPUY
         uses: actions/checkout@v4
 
-      # ==========================================================
-      # DEPENDENCIAS
-      # ==========================================================
+      # ============================================================
+      # 2. DEPENDENCIAS
+      # ============================================================
+
       - name: Install dependencies
-        env:
-          DEBIAN_FRONTEND: noninteractive
         run: |
           set -e
 
-          sudo apt-get update -qq
+          sudo apt-get update
 
-          sudo apt-get install -y --no-install-recommends \
-            git \
+          sudo apt-get install -y \
             bc \
             bison \
-            flex \
-            make \
+            build-essential \
+            ccache \
             clang \
-            llvm \
-            lld \
+            flex \
             gcc-aarch64-linux-gnu \
             gcc-arm-linux-gnueabi \
-            libssl-dev \
+            git \
             libelf-dev \
-            libncurses-dev \
+            libssl-dev \
+            lld \
+            llvm \
+            make \
+            pahole \
             python3 \
-            jq \
-            curl \
-            wget \
-            zip \
-            unzip \
-            gzip \
             rsync \
-            file \
-            device-tree-compiler \
-            ccache \
-            dwarves \
-            pahole
+            unzip \
+            wget \
+            zip
 
-      # ==========================================================
-      # CCACHE
-      # ==========================================================
+      # ============================================================
+      # 3. CCACHE
+      # ============================================================
+
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
-          key: tepuy-safe-${{ github.event.inputs.kernel_branch }}
-          max-size: 3G
+          key: peridot-base
+          max-size: 5G
 
-      # ==========================================================
-      # CLONAR FUENTE OFICIAL XIAOMI
-      # ==========================================================
-      - name: Clone Xiaomi Peridot source
+      # ============================================================
+      # 4. CLONAR XIAOMI
+      # ============================================================
+
+      - name: Clone Xiaomi kernel
         run: |
           set -e
 
-          rm -rf "$HOME/kernel-peridot"
-
           git clone \
             --depth=1 \
-            -b "${{ github.event.inputs.kernel_branch }}" \
+            --branch peridot-u-oss \
             https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git \
-            "$HOME/kernel-peridot"
+            kernel
 
-          cd "$HOME/kernel-peridot"
+          cd kernel
 
           echo "=========================================="
-          echo "TEPUY SAFE BOOT"
+          echo "XIAOMI PERIDOT"
           echo "=========================================="
+
           echo "Branch:"
           git branch --show-current
 
           echo "Commit:"
-          git rev-parse --short HEAD
+          git rev-parse HEAD
 
-      # ==========================================================
-      # FIX HWID
-      # ==========================================================
-      - name: Fix missing HWID references
+      # ============================================================
+      # 5. COMPROBAR CONFIG
+      # ============================================================
+
+      - name: Check Peridot configuration
         run: |
           set -e
 
-          cd "$HOME/kernel-peridot"
-
-          sed -i '/drivers\/misc\/hwid/d' \
-            drivers/misc/Kconfig || true
-
-          sed -i '/drivers\/misc\/hwid/d' \
-            drivers/misc/Makefile || true
-
-          mkdir -p drivers/misc/hwid
-
-          cat > drivers/misc/hwid/Makefile <<'EOF'
-          obj-y :=
-          EOF
-
-          cat > drivers/misc/hwid/Kconfig <<'EOF'
-          menu "Dummy HWID"
-          endmenu
-          EOF
-
-      # ==========================================================
-      # FIX WARNINGS CONOCIDOS
-      # ==========================================================
-      - name: Fix known format-string warnings
-        run: |
-          set -e
-
-          cd "$HOME/kernel-peridot"
-
-          FSA="drivers/soc/qcom/fsa4480-i2c.c"
-
-          if [ -f "$FSA" ]; then
-            sed -i \
-              's/usbc mode %ld, expected %d/usbc mode %d, expected %d/' \
-              "$FSA" || true
-          fi
-
-          FP="drivers/input/fingerprint/mi_fp/fp_driver.c"
-
-          if [ -f "$FP" ]; then
-            sed -i \
-              's/regulater addr is %d",fp_dev->vreg)/regulater addr is %p", fp_dev->vreg)/' \
-              "$FP" || true
-          fi
-
-      # ==========================================================
-      # VERIFICAR CONFIGURACION
-      # ==========================================================
-      - name: Verify Peridot configs
-        run: |
-          set -e
-
-          cd "$HOME/kernel-peridot"
-
-          echo "Buscando configuraciones Peridot..."
+          cd kernel
 
           test -f arch/arm64/configs/gki_defconfig
-
           test -f arch/arm64/configs/vendor/peridot_GKI.config
 
-          echo "[OK] gki_defconfig encontrado"
-          echo "[OK] peridot_GKI.config encontrado"
+          echo "[OK] gki_defconfig"
+          echo "[OK] peridot_GKI.config"
 
-      # ==========================================================
-      # IMPORTANTE:
-      #
-      # NO SE EJECUTA:
-      #   tepuy-patcher.py
-      #   tepuy-patcher-compat.py
-      #
-      # Esta compilación es únicamente para comprobar
-      # que el kernel Xiaomi base arranca correctamente.
-      # ==========================================================
-      - name: Confirm SAFE BOOT mode
+      # ============================================================
+      # 6. PREPARAR OUTPUT
+      # ============================================================
+
+      - name: Prepare output
         run: |
-          echo "=========================================="
-          echo "SAFE BOOT"
-          echo "=========================================="
-          echo "NO Tepuy patcher"
-          echo "NO CPU frequency modifications"
-          echo "NO GPU modifications"
-          echo "NO GameMode"
-          echo "NO thermal modifications"
-          echo "NO Tepuy sysfs"
-          echo "NO vendor_dlkm replacement"
+          set -e
 
-      # ==========================================================
-      # CONFIGURAR KERNEL
-      # ==========================================================
-      - name: Configure kernel
-        run: |
-          set -eo pipefail
-
-          cd "$HOME/kernel-peridot"
+          cd kernel
 
           rm -rf out
           mkdir -p out
 
-          export CC=clang
-          export CLANG_TRIPLE=aarch64-linux-gnu-
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+      # ============================================================
+      # 7. CONFIGURAR GKI
+      # ============================================================
 
+      - name: Configure GKI
+        run: |
+          set -e
+
+          cd kernel
+
+          export CC=clang
+          export LD=ld.lld
           export AR=llvm-ar
           export NM=llvm-nm
           export OBJCOPY=llvm-objcopy
           export OBJDUMP=llvm-objdump
           export STRIP=llvm-strip
 
-          export USE_CCACHE=1
-          export CCACHE_EXEC=/usr/bin/ccache
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
-          echo "=========================================="
-          echo "CONFIGURANDO GKI"
-          echo "=========================================="
+          make \
+            O=out \
+            ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            gki_defconfig
 
-          make O=out gki_defconfig
+      # ============================================================
+      # 8. APLICAR CONFIG PERIDOT
+      # ============================================================
 
-          echo "=========================================="
-          echo "APLICANDO PERIDOT_GKI.CONFIG"
-          echo "=========================================="
+      - name: Apply Peridot GKI configuration
+        run: |
+          set -e
+
+          cd kernel
 
           cat \
             arch/arm64/configs/vendor/peridot_GKI.config \
             >> out/.config
 
-          echo "=========================================="
-          echo "RESOLVIENDO CONFIGURACION"
-          echo "=========================================="
+          make \
+            O=out \
+            ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            olddefconfig
 
-          make O=out olddefconfig
+      # ============================================================
+      # 9. GUARDAR CONFIG
+      # ============================================================
+
+      - name: Save final config
+        run: |
+          set -e
+
+          cd kernel
+
+          cp \
+            out/.config \
+            out/defconfig-final
 
           echo "=========================================="
           echo "CONFIG FINAL"
           echo "=========================================="
 
           grep "^CONFIG_MODULES=" out/.config || true
-          grep "^CONFIG_MODULE_SIG_FORCE=" out/.config || true
           grep "^CONFIG_KALLSYMS=" out/.config || true
           grep "^CONFIG_KALLSYMS_ALL=" out/.config || true
 
-          test -s out/.config
+      # ============================================================
+      # 10. COMPILAR KERNEL
+      # ============================================================
 
-      # ==========================================================
-      # GUARDAR CONFIG FINAL
-      # ==========================================================
-      - name: Save final config
-        run: |
-          set -e
-
-          cd "$HOME/kernel-peridot"
-
-          mkdir -p final
-
-          cp out/.config final/defconfig-safe
-
-          echo "Configuración final guardada."
-
-      # ==========================================================
-      # COMPILAR
-      # ==========================================================
-      - name: Compile kernel
+      - name: Build kernel
         run: |
           set -eo pipefail
 
-          cd "$HOME/kernel-peridot"
+          cd kernel
 
           export CC=clang
-          export CLANG_TRIPLE=aarch64-linux-gnu-
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
-
+          export LD=ld.lld
           export AR=llvm-ar
           export NM=llvm-nm
           export OBJCOPY=llvm-objcopy
           export OBJDUMP=llvm-objdump
           export STRIP=llvm-strip
 
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+
           echo "=========================================="
-          echo "COMPILANDO SAFE BOOT"
+          echo "BUILDING IMAGE"
           echo "=========================================="
 
           make \
             O=out \
-            -j"$(nproc --all)" \
+            ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            -j"$(nproc)" \
             Image \
-            dtbs \
-            modules \
             2>&1 | tee out/build.log
 
-      # ==========================================================
-      # VERIFICAR IMAGE
-      # ==========================================================
+      # ============================================================
+      # 11. VERIFICAR IMAGE
+      # ============================================================
+
       - name: Verify Image
         run: |
           set -e
 
-          cd "$HOME/kernel-peridot"
+          cd kernel
 
-          KERNEL_IMAGE="out/arch/arm64/boot/Image"
+          IMAGE="out/arch/arm64/boot/Image"
 
-          test -f "$KERNEL_IMAGE"
+          if [ ! -f "$IMAGE" ]; then
+            echo "::error::Image no fue generado"
+            exit 1
+          fi
 
-          SIZE=$(stat -c%s "$KERNEL_IMAGE")
+          echo "=========================================="
+          echo "IMAGE"
+          echo "=========================================="
+
+          ls -lh "$IMAGE"
+          file "$IMAGE"
+
+          SIZE=$(stat -c%s "$IMAGE")
 
           echo "Image size: $SIZE bytes"
 
           if [ "$SIZE" -lt 2000000 ]; then
-            echo "::error::Image demasiado pequeño"
+            echo "::error::Image sospechosamente pequeño"
             exit 1
           fi
 
-          echo "[OK] Image válido"
+      # ============================================================
+      # 12. PREPARAR ANYKERNEL3
+      # ============================================================
 
-      # ==========================================================
-      # PREPARAR IMAGE.GZ
-      # ==========================================================
-      - name: Compress Image
+      - name: Clone AnyKernel3
         run: |
           set -e
-
-          cd "$HOME/kernel-peridot"
-
-          mkdir -p final
-
-          cp \
-            out/arch/arm64/boot/Image \
-            final/Image
-
-          gzip \
-            -n \
-            -9 \
-            -c final/Image \
-            > final/Image.gz
-
-          ls -lh final/
-
-      # ==========================================================
-      # INSTALAR MODULOS SOLO PARA ANALISIS
-      #
-      # NO SE INCLUYEN EN EL ZIP COMPAT.
-      # ==========================================================
-      - name: Install modules for analysis
-        run: |
-          set -e
-
-          cd "$HOME/kernel-peridot"
-
-          rm -rf "$HOME/modules_staging"
-
-          mkdir -p "$HOME/modules_staging"
-
-          if grep -q '^CONFIG_MODULES=y' out/.config; then
-
-            make \
-              O=out \
-              INSTALL_MOD_PATH="$HOME/modules_staging" \
-              INSTALL_MOD_STRIP=1 \
-              modules_install
-
-          else
-
-            echo "CONFIG_MODULES no está habilitado."
-
-          fi
-
-      # ==========================================================
-      # CREAR ZIP COMPAT SAFE BOOT
-      # ==========================================================
-      - name: Build SAFE BOOT ZIP
-        run: |
-          set -e
-
-          cd "$HOME"
-
-          rm -rf AK3
 
           git clone \
             --depth=1 \
             https://github.com/osm0sis/AnyKernel3.git \
-            AK3
+            AnyKernel3
 
-          cd AK3
+          rm -rf AnyKernel3/.git
 
-          sed \
-            's/__TEPUY_MODE__/compat/' \
-            "${{ github.workspace }}/anykernel.sh" \
-            > anykernel.sh
+      # ============================================================
+      # 13. COPIAR IMAGE SIN COMPRIMIR
+      # ============================================================
+
+      - name: Copy Image
+        run: |
+          set -e
 
           cp \
-            "$HOME/kernel-peridot/final/Image.gz" \
-            Image.gz
+            kernel/out/arch/arm64/boot/Image \
+            AnyKernel3/Image
 
-          mkdir -p tools
+          ls -lh AnyKernel3/Image
 
-          if [ -d "${{ github.workspace }}/tools" ]; then
+      # ============================================================
+      # 14. CREAR ANYKERNEL.SH ESPECIFICO
+      # ============================================================
 
-            cp \
-              -r \
-              "${{ github.workspace }}/tools/"* \
-              tools/
+      - name: Configure AnyKernel
+        run: |
+          set -e
 
-            chmod -R 755 tools
+          cat > AnyKernel3/anykernel.sh <<'EOF'
+          # AnyKernel3 Ramdisk Mod Script
+          # TEPUY Peridot BASE TEST
 
-          fi
+          properties() {
+          kernel.string=TEPUY Peridot BASE
+          do.devicecheck=0
+          do.modules=0
+          do.systemless=0
+          do.cleanup=1
+          do.cleanuponabort=0
+          device.name1=peridot
+          device.name2=
+          supported.versions=
+          supported.patchlevels=
+          }
 
-          echo "=========================================="
-          echo "CREANDO ZIP SAFE BOOT"
-          echo "=========================================="
+          ## AnyKernel setup
+          . tools/ak3-core.sh;
+
+          ## Boot install
+          dump_boot;
+
+          ## Replace ONLY kernel Image
+          write_boot;
+
+          ## End
+          EOF
+
+          chmod 755 AnyKernel3/anykernel.sh
+
+      # ============================================================
+      # 15. LIMPIAR ARCHIVOS INNECESARIOS
+      # ============================================================
+
+      - name: Clean AnyKernel package
+        run: |
+          set -e
+
+          cd AnyKernel3
+
+          rm -f \
+            Image.gz \
+            zImage \
+            zImage-dtb \
+            Image-dtb \
+            Image.lz4 \
+            Image.lz4-dtb \
+            Image.bz2 \
+            Image.xz \
+            Image.lzma
+
+      # ============================================================
+      # 16. CREAR ZIP
+      # ============================================================
+
+      - name: Create kernel ZIP
+        run: |
+          set -e
+
+          cd AnyKernel3
 
           zip \
             -r9 \
-            "$HOME/Tepuy-Kernel-SafeBoot-peridot.zip" \
-            * \
+            ../Tepuy-Peridot-BASE-Image.zip \
+            . \
             -x "*.git*" \
-            -x "*.zip" \
-            -x "README*"
+            -x "*.zip"
 
-          echo "ZIP creado:"
-          ls -lh "$HOME/Tepuy-Kernel-SafeBoot-peridot.zip"
+          cd ..
 
-      # ==========================================================
-      # ARTIFACTS
-      # ==========================================================
-      - name: Upload SAFE BOOT artifacts
+          ls -lh Tepuy-Peridot-BASE-Image.zip
+
+      # ============================================================
+      # 17. BUILD INFO
+      # ============================================================
+
+      - name: Generate build information
+        run: |
+          set -e
+
+          mkdir -p build-info
+
+          echo "TEPUY PERIDOT BASE TEST" \
+            > build-info/build.txt
+
+          echo "" \
+            >> build-info/build.txt
+
+          echo "Kernel source:" \
+            >> build-info/build.txt
+
+          cd kernel
+
+          git rev-parse HEAD \
+            >> ../build-info/build.txt
+
+          echo "" \
+            >> ../build-info/build.txt
+
+          echo "Config:" \
+            >> ../build-info/build.txt
+
+          grep "^CONFIG_MODULES=" \
+            out/.config \
+            >> ../build-info/build.txt || true
+
+      # ============================================================
+      # 18. SUBIR ARTIFACTS
+      # ============================================================
+
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Tepuy-SafeBoot-peridot
-          path: |
-            /home/runner/kernel-peridot/final/Image
-            /home/runner/kernel-peridot/final/Image.gz
-            /home/runner/kernel-peridot/final/defconfig-safe
-            /home/runner/kernel-peridot/out/build.log
-            /home/runner/Tepuy-Kernel-SafeBoot-peridot.zip
+          name: Tepuy-Peridot-BASE
           if-no-files-found: error
+          path: |
+            Tepuy-Peridot-BASE-Image.zip
+            kernel/out/arch/arm64/boot/Image
+            kernel/out/defconfig-final
+            kernel/out/build.log
+            build-info/build.txt
