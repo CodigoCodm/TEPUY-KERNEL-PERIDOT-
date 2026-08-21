@@ -1,4 +1,4 @@
-name: TEPUY Peridot - Xiaomi Official Build
+name: TEPUY Peridot - Xiaomi Build Environment
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   build:
-    name: Xiaomi Peridot Official Build
+    name: Prepare Xiaomi Peridot Build
     runs-on: ubuntu-22.04
     timeout-minutes: 300
 
@@ -24,7 +24,7 @@ jobs:
       # 1. CHECKOUT TEPUY
       # ============================================================
 
-      - name: Checkout TEPUY repository
+      - name: Checkout TEPUY
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
@@ -33,7 +33,7 @@ jobs:
       # 2. DEPENDENCIAS
       # ============================================================
 
-      - name: Install build dependencies
+      - name: Install dependencies
         run: |
           set -eux
 
@@ -62,20 +62,10 @@ jobs:
             zip
 
       # ============================================================
-      # 3. CACHE
+      # 3. XIAOMI KERNEL
       # ============================================================
 
-      - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@v1.2
-        with:
-          key: peridot-xiaomi-official
-          max-size: 5G
-
-      # ============================================================
-      # 4. XIAOMI KERNEL SOURCE
-      # ============================================================
-
-      - name: Clone Xiaomi peridot-u-oss
+      - name: Clone Xiaomi Peridot kernel
         run: |
           set -eux
 
@@ -88,505 +78,282 @@ jobs:
           cd kernel
 
           echo "=========================================="
-          echo "XIAOMI PERIDOT SOURCE"
+          echo "PERIDOT KERNEL"
           echo "=========================================="
 
-          echo "Branch:"
           git branch --show-current
-
-          echo "Commit:"
           git rev-parse HEAD
 
-          echo "Top-level:"
-          find . -maxdepth 1 -type f -printf '%f\n' | sort
-
       # ============================================================
-      # 5. XIAOMI KERNEL BUILD REPOSITORY
+      # 4. PREPARAR MSM-KERNEL
       # ============================================================
 
-      - name: Clone Xiaomi kernel_build
+      - name: Clone Xiaomi MSM kernel build tree
         run: |
           set -eux
 
           git clone \
             --depth=1 \
             https://github.com/MiCode/kernel_build.git \
-            kernel_build
+            msm-kernel
 
           echo "=========================================="
-          echo "XIAOMI KERNEL BUILD"
+          echo "MSM-KERNEL"
           echo "=========================================="
 
-          find kernel_build -maxdepth 3 -type f | sort | head -300
+          find msm-kernel \
+            -maxdepth 2 \
+            -type f \
+            | sort
 
       # ============================================================
-      # 6. BUSCAR CONFIGURACION PERIDOT
+      # 5. COMPROBAR BUILD CONFIG
       # ============================================================
 
-      - name: Locate Peridot build configuration
+      - name: Inspect Peridot build config
+        run: |
+          set -eux
+
+          echo "ROOT:"
+          pwd
+
+          echo ""
+          echo "Directory tree:"
+          find . \
+            -maxdepth 2 \
+            -type d \
+            | sort
+
+          echo ""
+          echo "Peridot config:"
+          cat kernel/build.config.msm.peridot
+
+      # ============================================================
+      # 6. COMPROBAR DEPENDENCIA MSM-KERNEL
+      # ============================================================
+
+      - name: Verify MSM kernel dependency
+        run: |
+          set -eux
+
+          test -f kernel/build.config.msm.peridot
+
+          echo "Checking required inherited config..."
+
+          if [ -f msm-kernel/build.config.msm.pineapple ]; then
+            echo "[OK] msm-kernel/build.config.msm.pineapple"
+          else
+            echo "[ERROR] msm-kernel/build.config.msm.pineapple NOT FOUND"
+
+            echo ""
+            echo "Available msm-kernel configs:"
+            find msm-kernel \
+              -type f \
+              -name 'build.config*' \
+              | sort
+
+            exit 1
+          fi
+
+      # ============================================================
+      # 7. CREAR ROOT_DIR
+      # ============================================================
+
+      - name: Export Xiaomi build environment
+        run: |
+          set -eux
+
+          echo "ROOT_DIR=$PWD" >> "$GITHUB_ENV"
+
+          echo "KERNEL_DIR=kernel" >> "$GITHUB_ENV"
+
+          echo "=========================================="
+          echo "BUILD ENVIRONMENT"
+          echo "=========================================="
+
+          echo "ROOT_DIR=$PWD"
+          echo "KERNEL_DIR=kernel"
+
+      # ============================================================
+      # 8. SOURCE BUILD CONFIG
+      # ============================================================
+
+      - name: Load Peridot build configuration
+        run: |
+          set -eux
+
+          export ROOT_DIR="$PWD"
+          export KERNEL_DIR=kernel
+
+          cd kernel
+
+          echo "=========================================="
+          echo "LOADING PERIDOT CONFIG"
+          echo "=========================================="
+
+          source ./build.config.msm.peridot
+
+          echo ""
+          echo "=========================================="
+          echo "EXPORTED VARIABLES"
+          echo "=========================================="
+
+          env | grep -E \
+            '^(ROOT_DIR|KERNEL_DIR|MSM_|BUILD_|DEFCONFIG|ARCH|SUBARCH|OUT_DIR|BRANCH|VARIANT|LLVM|CLANG)' \
+            | sort \
+            || true
+
+      # ============================================================
+      # 9. INSPECCIONAR MSM-KERNEL
+      # ============================================================
+
+      - name: Inspect inherited build system
         run: |
           set -eux
 
           echo "=========================================="
-          echo "SEARCHING PERIDOT BUILD CONFIGURATION"
+          echo "MSM-KERNEL BUILD SYSTEM"
           echo "=========================================="
 
           echo ""
-          echo "Files containing peridot:"
-          grep -Ril \
-            "peridot-u-oss\|peridot" \
-            kernel_build \
-            --include='*.sh' \
-            --include='*.config' \
-            --include='*.mk' \
-            --include='*.json' \
-            --include='*.yaml' \
-            --include='*.yml' \
-            --include='README*' \
-            2>/dev/null \
-            | sort \
-            | head -100 || true
+          echo "Build configs:"
+          find msm-kernel \
+            -type f \
+            -name 'build.config*' \
+            | sort
 
           echo ""
-          echo "Build scripts:"
-          find kernel_build \
+          echo "Shell scripts:"
+          find msm-kernel \
             -type f \
-            \( -name 'build.sh' \
-            -o -name '*.sh' \
-            -o -name 'build.config*' \) \
+            -name '*.sh' \
+            | sort
+
+          echo ""
+          echo "Bazel files:"
+          find msm-kernel \
+            -type f \
+            \( \
+              -name 'BUILD.bazel' \
+              -o -name '.bazelrc*' \
+              -o -name '*.bzl' \
+            \) \
+            | sort
+
+      # ============================================================
+      # 10. BUSCAR BUILD.SH GLOBAL
+      # ============================================================
+
+      - name: Locate build entry point
+        run: |
+          set -eux
+
+          echo "=========================================="
+          echo "BUILD ENTRY POINTS"
+          echo "=========================================="
+
+          find . \
+            -type f \
+            \( \
+              -name 'build.sh' \
+              -o -name 'build/build.sh' \
+              -o -name 'build.sh.inc' \
+            \) \
+            | sort
+
+          echo ""
+          echo "Files referencing build.config.msm.pineapple:"
+
+          grep -Ril \
+            "build.config.msm.pineapple" \
+            . \
+            --include='*.sh' \
+            --include='*.py' \
+            --include='*.mk' \
+            --include='BUILD*' \
+            2>/dev/null \
             | sort \
-            | head -200
+            | head -100 \
+            || true
 
       # ============================================================
-      # 7. INSPECCIONAR BUILD DEL ARBOL KERNEL
+      # 11. BAZEL INFORMATION
       # ============================================================
 
-      - name: Inspect kernel build files
+      - name: Inspect Bazel
+        run: |
+          set -eux
+
+          echo "=========================================="
+          echo "BAZEL"
+          echo "=========================================="
+
+          bazel --version || true
+          bazelisk --version || true
+
+          cd kernel
+
+          echo ""
+          echo "Kernel BUILD.bazel:"
+          test -f BUILD.bazel
+
+          sed -n '1,260p' BUILD.bazel
+
+      # ============================================================
+      # 12. SEARCH KERNEL TARGETS
+      # ============================================================
+
+      - name: Search kernel Bazel targets
         run: |
           set -eux
 
           cd kernel
 
           echo "=========================================="
-          echo "KERNEL BUILD FILES"
+          echo "BAZEL TARGET SEARCH"
           echo "=========================================="
 
-          echo ""
-          echo "BUILD files:"
-          find . \
-            -maxdepth 4 \
-            -type f \
-            \( -name 'BUILD.bazel' \
-            -o -name 'build.config*' \
-            -o -name 'build.sh' \
-            -o -name 'BUILD' \) \
-            | sort \
-            | head -300
-
-          echo ""
-          echo "Defconfigs containing peridot:"
-          find arch -type f \
-            \( -name '*defconfig*' -o -name '*.config' \) \
+          bazel query \
+            'kind(".*rule", //...)' \
             2>/dev/null \
-            | grep -i peridot \
-            | sort \
-            | head -100 || true
+            | grep -Ei \
+              'kernel|peridot|msm|image' \
+            | head -200 \
+            || true
 
       # ============================================================
-      # 8. PREPARAR OUT
+      # 13. CREATE OUTPUT
       # ============================================================
 
       - name: Prepare output
         run: |
           set -eux
 
-          cd kernel
-
-          rm -rf out
           mkdir -p out
 
-      # ============================================================
-      # 9. DETERMINAR BUILD SYSTEM
-      # ============================================================
-
-      - name: Detect Xiaomi build system
-        run: |
-          set -eux
-
-          cd kernel
-
-          echo "=========================================="
-          echo "BUILD SYSTEM DETECTION"
-          echo "=========================================="
-
-          if [ -f build/build.sh ]; then
-            echo "BUILD_SYSTEM=KERNEL_BUILD_SH" >> "$GITHUB_ENV"
-            echo "Detected: build/build.sh"
-
-          elif [ -f build.sh ]; then
-            echo "BUILD_SYSTEM=ROOT_BUILD_SH" >> "$GITHUB_ENV"
-            echo "Detected: build.sh"
-
-          elif find . -maxdepth 3 -name 'build.config*' -type f | grep -q .; then
-            echo "BUILD_SYSTEM=BUILD_CONFIG" >> "$GITHUB_ENV"
-            echo "Detected: build.config"
-
-          elif [ -f BUILD.bazel ]; then
-            echo "BUILD_SYSTEM=BAZEL" >> "$GITHUB_ENV"
-            echo "Detected: Bazel"
-
-          else
-            echo "BUILD_SYSTEM=UNKNOWN" >> "$GITHUB_ENV"
-            echo "No recognized build system found."
-          fi
-
-      # ============================================================
-      # 10. MOSTRAR BUILD SYSTEM
-      # ============================================================
-
-      - name: Show detected build system
-        run: |
-          set -eux
-
-          echo "BUILD_SYSTEM=$BUILD_SYSTEM"
-
-            # ============================================================
-      # 11. BUILD XIAOMI - build.config.msm.peridot
-      # ============================================================
-
-      - name: Run Xiaomi Peridot build
-        run: |
-          set -eo pipefail
-
-          cd kernel
-
-          echo "=========================================="
-          echo "XIAOMI PERIDOT BUILD"
-          echo "=========================================="
-
-          CONFIG="$PWD/build.config.msm.peridot"
-
-          if [ ! -f "$CONFIG" ]; then
-            echo "::error::build.config.msm.peridot not found"
-            exit 1
-          fi
-
-          echo "Build config:"
-          echo "$CONFIG"
-
-          echo ""
-          echo "=========================================="
-          echo "CONFIG CONTENT"
-          echo "=========================================="
-
-          sed -n '1,240p' "$CONFIG"
-
-          echo ""
-          echo "=========================================="
-          echo "BUILD CONFIG VARIABLES"
-          echo "=========================================="
-
-          grep -E \
-            '^(BRANCH|DEFCONFIG|BUILD_CONFIG|FILES|MAKE_GOALS|OUT_DIR|BUILD_CONFIG_FRAGMENTS|KERNEL_DIR|CLANG|LLVM)' \
-            "$CONFIG" \
-            || true
-
-          echo ""
-          echo "=========================================="
-          echo "AVAILABLE BUILD TOOLS"
-          echo "=========================================="
-
-          command -v bash || true
-          command -v make || true
-          command -v python3 || true
-          command -v clang || true
-          command -v bazel || true
-          command -v bazelisk || true
-
-          echo ""
-          echo "=========================================="
-          echo "BUILD FILES"
-          echo "=========================================="
-
-          find . \
-            -maxdepth 4 \
-            -type f \
-            \( \
-              -name 'build.sh' \
-              -o -name 'build.config*' \
-              -o -name 'BUILD.bazel' \
-              -o -name '.bazelrc*' \
-              -o -name 'kleaf' \
-            \) \
-            | sort
-
-          echo ""
-          echo "=========================================="
-          echo "SEARCHING BUILD.SH"
-          echo "=========================================="
-
-          BUILD_SH="$(find .. \
-            -type f \
-            -name 'build.sh' \
-            -print \
-            | head -1 || true)"
-
-          if [ -n "$BUILD_SH" ]; then
-            echo "Found build.sh:"
-            echo "$BUILD_SH"
-
-            chmod +x "$BUILD_SH"
-
-            "$BUILD_SH" "$CONFIG" \
-              2>&1 | tee out/xiaomi-build.log
-
-          else
-            echo "No build.sh found."
-
-            echo ""
-            echo "Searching for build config consumers..."
-
-            grep -Ril \
-              "build.config.msm.peridot" \
-              .. \
-              --include='*.sh' \
-              --include='*.py' \
-              --include='*.mk' \
-              --include='BUILD*' \
-              2>/dev/null \
-              | sort \
-              | head -100 \
-              || true
-
-            echo ""
-            echo "Searching for build.sh references..."
-
-            grep -Ril \
-              "build.sh" \
-              .. \
-              --include='*.sh' \
-              --include='*.py' \
-              --include='README*' \
-              2>/dev/null \
-              | sort \
-              | head -100 \
-              || true
-
-            echo ""
-            echo "::error::Xiaomi build config found but its build entry point was not found."
-            exit 1
-          fi
-
-      # ============================================================
-      # 12. FALLBACK: NO BUILD SYSTEM
-      # ============================================================
-
-      - name: Stop if Xiaomi build system was not detected
-        if: env.BUILD_SYSTEM == 'UNKNOWN'
-        run: |
-          echo "::error::No Xiaomi build system detected."
-          echo ""
-          echo "This is intentional."
-          echo "We will NOT guess gki_defconfig."
-          echo "We will NOT create HWID stubs."
-          echo "We will NOT modify Kconfig."
-          echo ""
-          echo "Build files found:"
-          find kernel \
-            -maxdepth 4 \
-            -type f \
-            \( -name 'build.config*' \
-            -o -name 'build.sh' \
-            -o -name 'BUILD.bazel' \
-            \) \
-            | sort \
-            | head -300
-
-          exit 1
-
-      # ============================================================
-      # 13. BUSCAR IMAGE
-      # ============================================================
-
-      - name: Locate generated Image
-        run: |
-          set -eux
-
-          echo "=========================================="
-          echo "SEARCHING GENERATED KERNEL"
-          echo "=========================================="
-
-          find kernel \
-            -type f \
-            \( -name 'Image' \
-            -o -name 'Image.gz' \
-            -o -name 'Image.lz4' \
-            -o -name 'Image.lz4-dtb' \
-            \) \
-            -size +2M \
-            -print \
-            | sort
-
-      # ============================================================
-      # 14. SELECCIONAR IMAGE
-      # ============================================================
-
-      - name: Select kernel Image
-        run: |
-          set -eux
-
-          IMAGE="$(find kernel \
-            -type f \
-            -name 'Image' \
-            -size +2M \
-            | head -1)"
-
-          if [ -z "$IMAGE" ]; then
-            echo "::error::No valid Image was generated."
-            exit 1
-          fi
-
-          echo "IMAGE_PATH=$IMAGE" >> "$GITHUB_ENV"
-
-          echo "Selected:"
-          echo "$IMAGE"
-
-          ls -lh "$IMAGE"
-          file "$IMAGE"
-
-      # ============================================================
-      # 15. PREPARAR ANYKERNEL3
-      # ============================================================
-
-      - name: Clone AnyKernel3
-        run: |
-          set -eux
-
-          git clone \
-            --depth=1 \
-            https://github.com/osm0sis/AnyKernel3.git \
-            AnyKernel3
-
-          rm -rf AnyKernel3/.git
-
-      # ============================================================
-      # 16. COPIAR IMAGE
-      # ============================================================
-
-      - name: Copy Xiaomi Image
-        run: |
-          set -eux
-
-          cp \
-            "$IMAGE_PATH" \
-            AnyKernel3/Image
-
-          ls -lh AnyKernel3/Image
-
-      # ============================================================
-      # 17. ANYKERNEL BASE
-      # ============================================================
-
-      - name: Configure AnyKernel
-        run: |
-          set -eux
-
-          cat > AnyKernel3/anykernel.sh <<'EOF'
-          properties() {
-          kernel.string=TEPUY Peridot - Xiaomi Base
-          do.devicecheck=0
-          do.modules=0
-          do.systemless=0
-          do.cleanup=1
-          do.cleanuponabort=0
-          device.name1=peridot
-          device.name2=
-          supported.versions=
-          supported.patchlevels=
-          }
-
-          . tools/ak3-core.sh;
-
-          dump_boot;
-
-          write_boot;
-          EOF
-
-          chmod 755 AnyKernel3/anykernel.sh
-
-      # ============================================================
-      # 18. CREAR ZIP
-      # ============================================================
-
-      - name: Create Xiaomi Base ZIP
-        run: |
-          set -eux
-
-          cd AnyKernel3
-
-          rm -f \
-            Image.gz \
-            Image.lz4 \
-            Image.lz4-dtb \
-            zImage \
-            zImage-dtb
-
-          zip \
-            -r9 \
-            ../Tepuy-Peridot-Xiaomi-BASE.zip \
-            . \
-            -x "*.git*" \
-            -x "*.zip"
-
-          cd ..
-
-          ls -lh Tepuy-Peridot-Xiaomi-BASE.zip
-
-      # ============================================================
-      # 19. BUILD INFORMATION
-      # ============================================================
-
-      - name: Generate build information
-        run: |
-          set -eux
-
-          mkdir -p build-info
-
           {
-            echo "TEPUY PERIDOT - XIAOMI BASE"
+            echo "TEPUY PERIDOT"
+            echo "XIAOMI BUILD ENVIRONMENT"
             echo "================================"
             echo ""
-            echo "Kernel source:"
-            cd kernel
-            git remote -v
+            echo "Kernel commit:"
+            git -C kernel rev-parse HEAD
             echo ""
-            echo "Commit:"
-            git rev-parse HEAD
-            echo ""
-            echo "Branch:"
-            git branch --show-current
-            echo ""
-            echo "Build system:"
-            echo "$BUILD_SYSTEM"
-            echo ""
-            echo "Image:"
-            echo "$IMAGE_PATH"
-          } > build-info/build.txt
+            echo "kernel_build commit:"
+            git -C msm-kernel rev-parse HEAD
+          } > out/build-info.txt
 
       # ============================================================
-      # 20. UPLOAD ARTIFACTS
+      # 14. UPLOAD DIAGNOSTIC ARTIFACT
       # ============================================================
 
-      - name: Upload build artifacts
+      - name: Upload build diagnostics
         uses: actions/upload-artifact@v5
         with:
-          name: Tepuy-Peridot-Xiaomi-BASE
+          name: Tepuy-Peridot-Xiaomi-Build-Diagnostics
           if-no-files-found: error
           path: |
-            Tepuy-Peridot-Xiaomi-BASE.zip
-            kernel/**/Image
-            kernel/**/Image.gz
-            kernel/**/Image.lz4
-            kernel/**/xiaomi-build.log
-            kernel/out/**
-            build-info/build.txt
+            out/build-info.txt
+            kernel/build.config.msm.peridot
+            kernel/BUILD.bazel
+            msm-kernel/build.config.msm.pineapple
