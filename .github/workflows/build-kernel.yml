@@ -1,69 +1,95 @@
-name: Build Tepuy Kernel - POCO F6 / Peridot
+name: Build Tepuy Kernel for Poco F6 (peridot)
 
-on:
+'on':
   workflow_dispatch:
+    inputs:
+      defconfig:
+        description: 'Defconfig to use'
+        required: true
+        default: 'gki_defconfig'
+        type: string
+      build_mode:
+        description: 'Build mode'
+        required: true
+        default: 'compat'
+        type: choice
+        options:
+          - compat
+          - full
+          - both
+
+env:
+  ARCH: arm64
+  SUBARCH: arm64
+  CCACHE_COMPILERCHECK: '%compiler% -dumpmachine; %compiler% -dumpversion'
+  CCACHE_NOHASHDIR: 'true'
+  CCACHE_MAXSIZE: '2G'
+  CCACHE_HARDLINK: 'true'
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
-
-    env:
-      KERNEL_DIR: ${{ github.workspace }}/kernel-peridot
-      OUT_DIR: ${{ github.workspace }}/kernel-peridot/out
-      DEFCONFIG: peridot_defconfig
-
-      # Xiaomi original
-      KERNEL_REPO: https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git
-      KERNEL_BRANCH: peridot-u-oss
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
 
     steps:
 
-      # ==========================================================
-      # 1. CHECKOUT TEPUY REPOSITORY
-      # ==========================================================
+      # ============================================================
+      # CHECKOUT WORKFLOW REPOSITORY
+      # ============================================================
 
-      - name: Checkout Tepuy
+      - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          path: tepuy
 
-      # ==========================================================
-      # 2. DEPENDENCIAS
-      # ==========================================================
+      # ============================================================
+      # BUILD ENVIRONMENT
+      # ============================================================
 
-      - name: Install dependencies
+      - name: Setup build environment
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          set -e
+          sudo apt-get update -qq
 
-          sudo apt-get update
-
-          sudo apt-get install -y \
+          sudo apt-get install -y -qq --no-install-recommends \
             git \
             bc \
             bison \
             flex \
-            build-essential \
-            clang \
-            lld \
-            llvm \
             libssl-dev \
-            libelf-dev \
-            libdw-dev \
-            dwarves \
-            cpio \
+            make \
+            gcc-aarch64-linux-gnu \
+            clang \
+            llvm \
+            lld \
+            device-tree-compiler \
             python3 \
-            python3-pip \
-            rsync \
-            unzip \
             zip \
+            unzip \
+            wget \
             curl \
-            wget
+            ccache \
+            libelf-dev \
+            libncurses-dev \
+            libxml2-utils \
+            gcc-arm-linux-gnueabi \
+            dwarves \
+            jq
 
-      # ==========================================================
-      # 3. CLONE ORIGINAL XIAOMI PERIDOT SOURCE
-      # ==========================================================
+      # ============================================================
+      # CCACHE
+      # ============================================================
 
-      - name: Clone original Xiaomi Peridot source
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: kernel-peridot
+          max-size: 2G
+
+      # ============================================================
+      # CLONE OFFICIAL XIAOMI PERIDOT SOURCE
+      # ============================================================
+
+      - name: Clone official Xiaomi kernel source for Peridot
         run: |
           set -e
 
@@ -71,211 +97,867 @@ jobs:
           echo " CLONE ORIGINAL XIAOMI PERIDOT SOURCE"
           echo "=============================================="
 
-          rm -rf "$KERNEL_DIR"
+          rm -rf "$HOME/kernel-peridot"
 
           git clone \
             --depth=1 \
-            --branch "$KERNEL_BRANCH" \
-            "$KERNEL_REPO" \
-            "$KERNEL_DIR"
+            --single-branch \
+            --branch peridot-u-oss \
+            https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git \
+            "$HOME/kernel-peridot"
 
-          cd "$KERNEL_DIR"
+          cd "$HOME/kernel-peridot"
 
-          echo
-          echo "Remote:"
+          echo ""
+          echo "=== Git remote ==="
           git remote -v
 
-          echo
-          echo "Branch:"
+          echo ""
+          echo "=== Branch ==="
           git branch --show-current
 
-          echo
-          echo "Commit:"
-          git rev-parse HEAD
+          echo ""
+          echo "=== Commit ==="
+          git log -1 --oneline
 
-      # ==========================================================
-      # 4. VALIDATE SOURCE
-      # ==========================================================
+          echo ""
+          echo "=== Kernel version ==="
+          head -20 Makefile
 
-      - name: Validate Xiaomi source
-        run: |
-          set -e
+          echo ""
+          echo "=== Peridot source check ==="
 
-          cd "$KERNEL_DIR"
-
-          echo "=============================================="
-          echo " VALIDATE KERNEL SOURCE"
-          echo "=============================================="
-
-          test -f Makefile
-          test -d arch
-          test -d drivers
-          test -d kernel
-
-          echo "[OK] Kernel source valid"
-
-          echo
-          echo "Searching Peridot defconfig..."
-
-          find arch -type f \
-            \( -name "*peridot*defconfig" -o -name "peridot_defconfig" \) \
-            -print
-
-      # ==========================================================
-      # 5. APPLY TEPUY PATCH
-      # ==========================================================
-
-      - name: Apply Tepuy patch
-        run: |
-          set -e
-
-          echo "=============================================="
-          echo " APPLY TEPUY PATCH"
-          echo "=============================================="
-
-          PATCHER="$GITHUB_WORKSPACE/tepuy/tepuy-patcher-compat.py"
-
-          if [ ! -f "$PATCHER" ]; then
-            echo "[ERROR] Patcher not found:"
-            echo "$PATCHER"
+          if [ -d "arch/arm64" ]; then
+            echo "[OK] arch/arm64"
+          else
+            echo "[ERROR] arch/arm64 missing"
             exit 1
           fi
 
-          python3 "$PATCHER" "$KERNEL_DIR"
+          if [ -d "drivers" ]; then
+            echo "[OK] drivers"
+          else
+            echo "[ERROR] drivers missing"
+            exit 1
+          fi
 
-      # ==========================================================
-      # 6. PREPARE TOOLCHAIN
-      # ==========================================================
+          if [ -f "Makefile" ]; then
+            echo "[OK] Makefile"
+          else
+            echo "[ERROR] Makefile missing"
+            exit 1
+          fi
 
-      - name: Prepare Clang
+          echo ""
+          echo "[OK] Official Peridot source ready."
+
+      # ============================================================
+      # SOURCE SANITY CHECK
+      # ============================================================
+
+      - name: Check Peridot source layout
         run: |
           set -e
 
+          cd "$HOME/kernel-peridot"
+
           echo "=============================================="
-          echo " PREPARE CLANG TOOLCHAIN"
+          echo " PERIDOT SOURCE CHECK"
           echo "=============================================="
 
-          clang --version
-          ld.lld --version
+          echo ""
+          echo "=== Kconfig references to HWID ==="
 
-      # ==========================================================
-      # 7. DEFCONFIG
-      # ==========================================================
+          if grep -n \
+            'drivers/misc/hwid/Kconfig' \
+            drivers/misc/Kconfig 2>/dev/null; then
 
-      - name: Kernel defconfig
+            echo ""
+            echo "[WARNING] Source references drivers/misc/hwid/Kconfig"
+
+            if [ -f "drivers/misc/hwid/Kconfig" ]; then
+              echo "[OK] HWID Kconfig exists."
+            else
+              echo "[WARNING] HWID Kconfig is absent from public source."
+              echo "[INFO] No fake HWID driver will be created."
+              echo "[INFO] Continuing with the original source."
+            fi
+
+          else
+            echo "[OK] No missing HWID Kconfig reference detected."
+          fi
+
+          echo ""
+          echo "=== Available Peridot defconfigs ==="
+
+          find arch/arm64/configs \
+            -maxdepth 3 \
+            -type f \
+            \( -name "*peridot*" -o -name "*gki*" \) \
+            2>/dev/null \
+            | sort \
+            | head -100
+
+      # ============================================================
+      # TEPUY COMPAT PATCH
+      # ============================================================
+
+      - name: Apply Tepuy GameMode patches (COMPAT)
+        if: github.event.inputs.build_mode == 'compat' || github.event.inputs.build_mode == 'both'
         run: |
           set -e
 
+          cd "$HOME/kernel-peridot"
+
           echo "=============================================="
-          echo " DEFCONFIG"
+          echo " APPLY TEPUY COMPAT PATCH"
           echo "=============================================="
 
-          cd "$KERNEL_DIR"
+          echo "Kernel:"
+          echo "$HOME/kernel-peridot"
 
-          mkdir -p "$OUT_DIR"
+          echo "Patcher:"
+          echo "${{ github.workspace }}/tepuy-patcher-compat.py"
 
-          make O="$OUT_DIR" \
-            ARCH=arm64 \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            "$DEFCONFIG"
+          echo ""
+          echo "Git state before patch:"
+          git status --short || true
 
-      # ==========================================================
-      # 8. BUILD KERNEL
-      # ==========================================================
+          python3 \
+            "${{ github.workspace }}/tepuy-patcher-compat.py" \
+            "$HOME/kernel-peridot"
 
-      - name: Build kernel
+          echo ""
+          echo "=== Verifying Tepuy modifications ==="
+
+          if [ -f kernel/tepuy_sysfs.c ]; then
+            echo "[OK] kernel/tepuy_sysfs.c"
+            grep -n "tepuy_game_mode" \
+              kernel/tepuy_sysfs.c \
+              | head -10 || true
+          else
+            echo "[ERROR] kernel/tepuy_sysfs.c missing"
+            exit 1
+          fi
+
+          echo ""
+          echo "=== cpufreq verification ==="
+
+          grep -n "tepuy_game_mode" \
+            drivers/cpufreq/cpufreq.c \
+            | head -10 || true
+
+          echo ""
+          echo "=== thermal verification ==="
+
+          if [ -f drivers/thermal/thermal_core.c ]; then
+            grep -n "tepuy_game_mode" \
+              drivers/thermal/thermal_core.c \
+              | head -10 || true
+          fi
+
+          echo ""
+          echo "[OK] Tepuy COMPAT patch stage finished."
+
+      # ============================================================
+      # TEPUY FULL PATCH
+      # ============================================================
+
+      - name: Apply Tepuy GameMode patches (FULL)
+        if: github.event.inputs.build_mode == 'full'
+        run: |
+          set -e
+
+          cd "$HOME/kernel-peridot"
+
+          echo "=============================================="
+          echo " APPLY TEPUY FULL PATCH"
+          echo "=============================================="
+
+          python3 \
+            "${{ github.workspace }}/tepuy-patcher.py" \
+            "$HOME/kernel-peridot"
+
+          echo ""
+          echo "=== Verifying vendor driver modifications ==="
+
+          if [ -f drivers/cpufreq/qcom-cpufreq-hw.c ]; then
+            grep -n "tepuy_game_mode" \
+              drivers/cpufreq/qcom-cpufreq-hw.c \
+              | head -5 || true
+          fi
+
+          if [ -f drivers/gpu/drm/msm/adreno/adreno_gpu.c ]; then
+            grep -n "tepuy_game_mode" \
+              drivers/gpu/drm/msm/adreno/adreno_gpu.c \
+              | head -5 || true
+          fi
+
+          if [ -f drivers/gpu/drm/msm/adreno/a6xx_gmu.c ]; then
+            grep -n "tepuy_game_mode" \
+              drivers/gpu/drm/msm/adreno/a6xx_gmu.c \
+              | head -5 || true
+          fi
+
+      # ============================================================
+      # BUILD KERNEL
+      # ============================================================
+
+      - name: Build kernel and modules
         run: |
           set -o pipefail
+
+          cd "$HOME/kernel-peridot"
 
           echo "=============================================="
           echo " START KERNEL BUILD"
           echo "=============================================="
 
-          echo "Kernel:"
-          echo "$KERNEL_DIR"
-
-          echo "Output:"
-          echo "$OUT_DIR"
-
           echo "Defconfig:"
-          echo "$DEFCONFIG"
+          echo "${{ github.event.inputs.defconfig }}"
 
-          cd "$KERNEL_DIR"
+          echo "Build mode:"
+          echo "${{ github.event.inputs.build_mode }}"
 
-          make -j"$(nproc)" \
-            O="$OUT_DIR" \
-            ARCH=arm64 \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            Image 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+          mkdir -p out
 
-      # ==========================================================
-      # 9. VERIFY IMAGE
-      # ==========================================================
+          export ARCH=arm64
+          export SUBARCH=arm64
 
-      - name: Verify Image
+          export CC="clang"
+          export CLANG_TRIPLE="aarch64-linux-gnu-"
+
+          export CROSS_COMPILE="aarch64-linux-gnu-"
+          export CROSS_COMPILE_ARM32="arm-linux-gnueabi-"
+
+          export AR="llvm-ar"
+          export NM="llvm-nm"
+          export OBJCOPY="llvm-objcopy"
+          export OBJDUMP="llvm-objdump"
+          export STRIP="llvm-strip"
+
+          export LLVM=1
+          export LLVM_IAS=1
+
+          export USE_CCACHE=1
+          export CCACHE_EXEC=/usr/bin/ccache
+
+          echo ""
+          echo "=============================================="
+          echo " DEFCONFIG"
+          echo "=============================================="
+
+          make O=out \
+            "${{ github.event.inputs.defconfig }}" \
+            2>&1 | tee -a out/build.log
+
+          echo ""
+          echo "=============================================="
+          echo " BUILD KERNEL"
+          echo "=============================================="
+
+          make O=out \
+            -j$(nproc --all) \
+            2>&1 | tee -a out/build.log
+
+          echo ""
+          echo "=============================================="
+          echo " BUILD MODULES"
+          echo "=============================================="
+
+          make O=out \
+            -j$(nproc --all) \
+            modules \
+            2>&1 | tee -a out/build.log
+
+          echo ""
+          echo "=============================================="
+          echo " INSTALL MODULES"
+          echo "=============================================="
+
+          rm -rf "$HOME/modules_staging"
+
+          make O=out \
+            INSTALL_MOD_PATH="$HOME/modules_staging" \
+            INSTALL_MOD_STRIP=1 \
+            modules_install \
+            2>&1 | tee -a out/build.log
+
+          echo ""
+          echo "=== Kernel images ==="
+
+          find out \
+            -name "Image*" \
+            -type f \
+            2>/dev/null
+
+          echo ""
+          echo "=== Modules count ==="
+
+          if [ -d "$HOME/modules_staging" ]; then
+            find "$HOME/modules_staging" \
+              -name "*.ko" \
+              | wc -l
+          else
+            echo "0"
+          fi
+
+      # ============================================================
+      # PREPARE KERNEL IMAGE
+      # ============================================================
+
+      - name: Prepare kernel image
         run: |
           set -e
 
+          cd "$HOME/kernel-peridot"
+
           echo "=============================================="
-          echo " VERIFY KERNEL IMAGE"
+          echo " PREPARE KERNEL IMAGE"
           echo "=============================================="
 
-          IMAGE="$OUT_DIR/arch/arm64/boot/Image"
+          KERNEL_IMAGE=""
 
-          if [ ! -f "$IMAGE" ]; then
-            echo "[ERROR] Image not generated"
+          if [ -f "out/arch/arm64/boot/Image.gz-dtb" ]; then
+            KERNEL_IMAGE="out/arch/arm64/boot/Image.gz-dtb"
+
+          elif [ -f "out/arch/arm64/boot/Image.gz" ]; then
+            KERNEL_IMAGE="out/arch/arm64/boot/Image.gz"
+
+          elif [ -f "out/arch/arm64/boot/Image" ]; then
+            KERNEL_IMAGE="out/arch/arm64/boot/Image"
+
+          fi
+
+          if [ -z "$KERNEL_IMAGE" ]; then
+            echo "ERROR: No kernel image found!"
             exit 1
           fi
 
-          echo "[OK] Image generated"
+          echo "[OK] Kernel image:"
+          echo "$KERNEL_IMAGE"
 
-          ls -lh "$IMAGE"
+          if [ "$KERNEL_IMAGE" != "out/arch/arm64/boot/Image.gz" ]; then
+            cp "$KERNEL_IMAGE" \
+              out/arch/arm64/boot/Image.gz
+          fi
 
-          file "$IMAGE"
+          ls -lh \
+            out/arch/arm64/boot/Image.gz
 
-      # ==========================================================
-      # 10. PACKAGE
-      # ==========================================================
+      # ============================================================
+      # DOWNLOAD MAGISKBOOT
+      # ============================================================
 
-      - name: Package kernel
+      - name: Download magiskboot
         run: |
           set -e
 
           echo "=============================================="
-          echo " PACKAGE"
+          echo " DOWNLOAD MAGISKBOOT"
           echo "=============================================="
 
-          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          mkdir -p "$HOME/magisk"
+
+          cd "$HOME/magisk"
+
+          APK_URL=$(
+            curl -sf \
+              https://api.github.com/repos/topjohnwu/Magisk/releases/latest \
+              | jq -r \
+              '.assets[]
+               | select(.name | test("^Magisk-v.*\\.apk$"))
+               | .browser_download_url' \
+              | head -n1
+          )
+
+          if [ -z "$APK_URL" ] || [ "$APK_URL" = "null" ]; then
+
+            echo "WARNING: Could not obtain latest Magisk APK."
+
+            wget -q \
+              --timeout=30 \
+              "https://github.com/topjohnwu/Magisk/releases/download/v28.1/Magisk-v28.1.apk" \
+              -O magisk.apk \
+              2>/dev/null || true
+
+          else
+
+            curl -Lf \
+              "$APK_URL" \
+              -o magisk.apk
+
+          fi
+
+          if [ ! -f magisk.apk ]; then
+            echo "ERROR: Magisk APK unavailable"
+            exit 1
+          fi
+
+          unzip -j \
+            magisk.apk \
+            "lib/x86_64/libmagiskboot.so" \
+            -d . \
+            2>/dev/null || true
+
+          if [ ! -f libmagiskboot.so ]; then
+
+            unzip -j \
+              magisk.apk \
+              "lib/arm64-v8a/libmagiskboot.so" \
+              -d . \
+              2>/dev/null || true
+
+          fi
+
+          if [ ! -f libmagiskboot.so ]; then
+            echo "ERROR: Could not extract magiskboot"
+            exit 1
+          fi
+
+          mv libmagiskboot.so magiskboot
+          chmod +x magiskboot
+
+          echo "[OK] magiskboot ready"
+
+          ./magiskboot --help \
+            >/dev/null 2>&1 || true
+
+      # ============================================================
+      # BUILD BOOT.IMG
+      # ============================================================
+
+      - name: Build boot.img (pack kernel into stock boot)
+        run: |
+          set -e
+
+          cd "$HOME"
+
+          echo "=============================================="
+          echo " BUILD TEPUY BOOT.IMG"
+          echo "=============================================="
+
+          if [ ! -f "${{ github.workspace }}/boot_stock.img" ]; then
+            echo "ERROR: boot_stock.img not found!"
+            exit 1
+          fi
+
+          if [ ! -f "$HOME/magisk/magiskboot" ]; then
+            echo "ERROR: magiskboot not available"
+            exit 1
+          fi
 
           cp \
-            "$OUT_DIR/arch/arm64/boot/Image" \
-            "$GITHUB_WORKSPACE/artifacts/Image"
+            "${{ github.workspace }}/boot_stock.img" \
+            "$HOME/boot_stock.img"
+
+          echo ""
+          echo "=== Unpacking stock boot.img ==="
+
+          "$HOME/magisk/magiskboot" \
+            unpack \
+            "$HOME/boot_stock.img"
+
+          echo ""
+          echo "=== Replacing kernel ==="
 
           cp \
-            "$GITHUB_WORKSPACE/build.log" \
-            "$GITHUB_WORKSPACE/artifacts/build.log"
+            "$HOME/kernel-peridot/out/arch/arm64/boot/Image.gz" \
+            "$HOME/kernel"
 
-          cd "$GITHUB_WORKSPACE/artifacts"
+          echo ""
+          echo "=== Repacking boot.img ==="
 
-          zip -9 \
-            tepuy-peridot-kernel.zip \
-            Image \
-            build.log
+          "$HOME/magisk/magiskboot" \
+            repack \
+            "$HOME/boot_stock.img" \
+            "$HOME/boot_tepuy.img"
 
-          ls -lh
+          echo ""
+          echo "=== Verifying boot.img ==="
 
-      # ==========================================================
-      # 11. UPLOAD ARTIFACTS
-      # ==========================================================
+          ls -lh "$HOME/boot_tepuy.img"
 
-      - name: Upload kernel
+          file "$HOME/boot_tepuy.img"
+
+          echo ""
+          echo "[OK] boot_tepuy.img created."
+
+      # ============================================================
+      # COMPAT ZIP
+      # ============================================================
+
+      - name: Build COMPAT zip
+        if: github.event.inputs.build_mode == 'compat' || github.event.inputs.build_mode == 'both'
+        run: |
+          set -e
+
+          cd "$HOME"
+
+          rm -rf AnyKernel3-compat
+
+          git clone \
+            --depth=1 \
+            https://github.com/osm0sis/AnyKernel3.git \
+            AnyKernel3-compat
+
+          cd AnyKernel3-compat
+
+          cp \
+            "${{ github.workspace }}/anykernel-compat.sh" \
+            ./anykernel.sh
+
+          cp \
+            "$HOME/kernel-peridot/out/arch/arm64/boot/Image.gz" \
+            ./Image.gz
+
+          if [ -f "$HOME/kernel-peridot/out/arch/arm64/boot/dts/qcom/sm8635.dtb" ]; then
+
+            cp \
+              "$HOME/kernel-peridot/out/arch/arm64/boot/dts/qcom/sm8635.dtb" \
+              ./dtb
+
+          else
+
+            DTB=$(
+              find \
+                "$HOME/kernel-peridot/out/arch/arm64/boot/dts" \
+                -name "*.dtb" \
+                | head -1
+            )
+
+            if [ -n "$DTB" ]; then
+              cp "$DTB" ./dtb
+            fi
+
+          fi
+
+          mkdir -p tools
+
+          if [ -d "${{ github.workspace }}/tools" ]; then
+            cp -r \
+              "${{ github.workspace }}/tools/"* \
+              tools/ \
+              2>/dev/null || true
+
+            chmod -R 755 tools/
+          fi
+
+          APK_URL=$(
+            curl -sf \
+              https://api.github.com/repos/topjohnwu/Magisk/releases/latest \
+              | jq -r \
+              '.assets[]
+               | select(.name | test("^Magisk-v.*\\.apk$"))
+               | .browser_download_url' \
+              | head -n1
+          )
+
+          if [ -n "$APK_URL" ] && [ "$APK_URL" != "null" ]; then
+
+            curl -Lf \
+              "$APK_URL" \
+              -o /tmp/magisk_compat.apk \
+              2>/dev/null || true
+
+            if [ -f /tmp/magisk_compat.apk ]; then
+
+              rm -rf /tmp/magisk_compat
+
+              mkdir -p /tmp/magisk_compat
+
+              unzip -o \
+                /tmp/magisk_compat.apk \
+                -d /tmp/magisk_compat \
+                >/dev/null
+
+              cp \
+                /tmp/magisk_compat/lib/arm64-v8a/libmagiskboot.so \
+                tools/magiskboot \
+                2>/dev/null || true
+
+              cp \
+                /tmp/magisk_compat/lib/arm64-v8a/libbusybox.so \
+                tools/busybox \
+                2>/dev/null || true
+
+              chmod 755 \
+                tools/magiskboot \
+                tools/busybox \
+                2>/dev/null || true
+
+            fi
+          fi
+
+          if [ -f "${{ github.workspace }}/tools/ak3-core.sh" ]; then
+            cp \
+              "${{ github.workspace }}/tools/ak3-core.sh" \
+              tools/ak3-core.sh
+          fi
+
+          echo ""
+          echo "=== Tools in COMPAT zip ==="
+
+          ls -la tools/ \
+            2>/dev/null \
+            | head -20
+
+          rm -f "$HOME/Tepuy-Kernel-Compat-peridot.zip"
+
+          zip -r9 \
+            "$HOME/Tepuy-Kernel-Compat-peridot.zip" \
+            * \
+            -x "*.zip" "*.git*" "README*"
+
+          echo ""
+          echo "[OK] COMPAT zip created."
+
+          ls -lh \
+            "$HOME/Tepuy-Kernel-Compat-peridot.zip"
+
+      # ============================================================
+      # FULL ZIP
+      # ============================================================
+
+      - name: Build FULL zip
+        if: github.event.inputs.build_mode == 'full' || github.event.inputs.build_mode == 'both'
+        run: |
+          set -e
+
+          cd "$HOME"
+
+          rm -rf AnyKernel3-full
+
+          git clone \
+            --depth=1 \
+            https://github.com/osm0sis/AnyKernel3.git \
+            AnyKernel3-full
+
+          cd AnyKernel3-full
+
+          cp \
+            "${{ github.workspace }}/anykernel-full.sh" \
+            ./anykernel.sh
+
+          cp \
+            "$HOME/kernel-peridot/out/arch/arm64/boot/Image.gz" \
+            ./Image.gz
+
+          if [ -f "$HOME/kernel-peridot/out/arch/arm64/boot/dts/qcom/sm8635.dtb" ]; then
+
+            cp \
+              "$HOME/kernel-peridot/out/arch/arm64/boot/dts/qcom/sm8635.dtb" \
+              ./dtb
+
+          else
+
+            DTB=$(
+              find \
+                "$HOME/kernel-peridot/out/arch/arm64/boot/dts" \
+                -name "*.dtb" \
+                | head -1
+            )
+
+            if [ -n "$DTB" ]; then
+              cp "$DTB" ./dtb
+            fi
+
+          fi
+
+          if [ -f "${{ github.workspace }}/dtbo.img" ]; then
+            cp \
+              "${{ github.workspace }}/dtbo.img" \
+              ./dtbo.img
+          fi
+
+          mkdir -p \
+            _modules \
+            _system_dlkm
+
+          python3 \
+            "${{ github.workspace }}/prepare-modules.py" \
+            --input "$HOME/modules_staging" \
+            --vendor-out "_modules" \
+            --system-out "_system_dlkm"
+
+          mkdir -p tools
+
+          if [ -d "${{ github.workspace }}/tools" ]; then
+
+            cp -r \
+              "${{ github.workspace }}/tools/"* \
+              tools/ \
+              2>/dev/null || true
+
+            chmod -R 755 tools/
+
+          else
+
+            echo "ERROR: tools/ directory not found!"
+            exit 1
+
+          fi
+
+          if [ -f "${{ github.workspace }}/tools/ak3-core.sh" ]; then
+            cp \
+              "${{ github.workspace }}/tools/ak3-core.sh" \
+              tools/ak3-core.sh
+          fi
+
+          rm -f "$HOME/Tepuy-Kernel-Full-peridot.zip"
+
+          zip -r9 \
+            "$HOME/Tepuy-Kernel-Full-peridot.zip" \
+            * \
+            -x "*.zip" "*.git*" "README*"
+
+          echo ""
+          echo "[OK] FULL zip created."
+
+          ls -lh \
+            "$HOME/Tepuy-Kernel-Full-peridot.zip"
+
+      # ============================================================
+      # GAMEMODE AUTO ACTIVATOR
+      # ============================================================
+
+      - name: Build GameMode Auto-Activator module
+        if: github.event.inputs.build_mode == 'compat' || github.event.inputs.build_mode == 'both'
+        run: |
+          set -e
+
+          mkdir -p "$HOME/gamemode-module"
+
+          cd "$HOME/gamemode-module"
+
+          cat > module.prop <<'EOF'
+          id=tepuy-gamemode-auto
+          name=Tepuy GameMode Auto-Activator
+          version=1.0
+          versionCode=1
+          author=CodigoCodm
+          description=Activa automaticamente Tepuy GameMode al arrancar. Requiere kernel Tepuy.
+          EOF
+
+          cat > service.sh <<'EOF'
+          #!/system/bin/sh
+
+          LOG_FILE="/data/local/tmp/tepuy-gamemode.log"
+          SYSFS_NODE="/sys/kernel/tepuy_boost/game_mode"
+          MAX_WAIT=30
+
+          log_msg() {
+              echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
+          }
+
+          rm -f "$LOG_FILE"
+
+          log_msg "=== Tepuy GameMode Auto-Activator iniciado ==="
+          log_msg "Esperando sysfs node..."
+
+          waited=0
+
+          while [ ! -f "$SYSFS_NODE" ]; do
+              sleep 1
+              waited=$((waited + 1))
+
+              if [ "$waited" -ge "$MAX_WAIT" ]; then
+                  log_msg "ERROR: sysfs node no aparecio"
+                  log_msg "Kernel Tepuy no detectado."
+                  exit 1
+              fi
+          done
+
+          log_msg "sysfs node encontrado despues de ${waited}s"
+
+          current=$(cat "$SYSFS_NODE" 2>/dev/null)
+
+          log_msg "Estado actual: $current"
+
+          if echo 1 > "$SYSFS_NODE" 2>/dev/null; then
+
+              new_state=$(cat "$SYSFS_NODE" 2>/dev/null)
+
+              log_msg "SUCCESS: GameMode activado. Estado: $new_state"
+
+          else
+
+              log_msg "ERROR: No se pudo escribir en sysfs."
+
+              exit 1
+
+          fi
+
+          log_msg "=== Activacion completada ==="
+          EOF
+
+          chmod 755 service.sh
+
+          zip -r9 \
+            "$HOME/Tepuy-GameMode-AutoActivator.zip" \
+            module.prop \
+            service.sh
+
+          echo ""
+          echo "[OK] GameMode Auto-Activator created."
+
+          ls -lh \
+            "$HOME/Tepuy-GameMode-AutoActivator.zip"
+
+      # ============================================================
+      # ARTIFACTS
+      # ============================================================
+
+      - name: Upload boot.img
         uses: actions/upload-artifact@v4
         with:
-          name: tepuy-peridot-kernel
+          name: boot_tepuy
+          path: ~/boot_tepuy.img
+          retention-days: 30
+
+      - name: Upload COMPAT zip
+        if: github.event.inputs.build_mode == 'compat' || github.event.inputs.build_mode == 'both'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tepuy-Kernel-Compat-peridot
+          path: ~/Tepuy-Kernel-Compat-peridot.zip
+          retention-days: 30
+
+      - name: Upload FULL zip
+        if: github.event.inputs.build_mode == 'full' || github.event.inputs.build_mode == 'both'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tepuy-Kernel-Full-peridot
+          path: ~/Tepuy-Kernel-Full-peridot.zip
+          retention-days: 30
+
+      - name: Upload GameMode Auto-Activator
+        if: github.event.inputs.build_mode == 'compat' || github.event.inputs.build_mode == 'both'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tepuy-GameMode-AutoActivator
+          path: ~/Tepuy-GameMode-AutoActivator.zip
+          retention-days: 30
+
+      - name: Upload kernel image
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-image
           path: |
-            artifacts/Image
-            artifacts/tepuy-peridot-kernel.zip
-            artifacts/build.log
+            ~/kernel-peridot/out/arch/arm64/boot/Image.gz
+            ~/kernel-peridot/out/arch/arm64/boot/Image.gz-dtb
+            ~/kernel-peridot/out/arch/arm64/boot/Image
+          retention-days: 30
+          if-no-files-found: ignore
+
+      # ============================================================
+      # BUILD LOG
+      # ============================================================
+
+      - name: Upload build log if failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: ~/kernel-peridot/out/build.log
+          retention-days: 7
