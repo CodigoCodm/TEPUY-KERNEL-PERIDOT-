@@ -1,4 +1,4 @@
-name: TEPUY Peridot - Base Kernel Test
+name: TEPUY Peridot - Xiaomi Official Build
 
 on:
   workflow_dispatch:
@@ -8,34 +8,34 @@ permissions:
 
 jobs:
   build:
-    name: Build Peridot Base Kernel
+    name: Xiaomi Peridot Official Build
     runs-on: ubuntu-22.04
-    timeout-minutes: 240
+    timeout-minutes: 300
 
     env:
       ARCH: arm64
       SUBARCH: arm64
-      LLVM: "1"
-      LLVM_IAS: "1"
       KBUILD_BUILD_USER: Codigocodm
       KBUILD_BUILD_HOST: TEPUY
 
     steps:
 
       # ============================================================
-      # 1. CHECKOUT TEPUY REPOSITORY
+      # 1. CHECKOUT TEPUY
       # ============================================================
 
-      - name: Checkout TEPUY
-        uses: actions/checkout@v4
+      - name: Checkout TEPUY repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       # ============================================================
       # 2. DEPENDENCIAS
       # ============================================================
 
-      - name: Install dependencies
+      - name: Install build dependencies
         run: |
-          set -e
+          set -eux
 
           sudo apt-get update
 
@@ -45,9 +45,8 @@ jobs:
             build-essential \
             ccache \
             clang \
+            curl \
             flex \
-            gcc-aarch64-linux-gnu \
-            gcc-arm-linux-gnueabi \
             git \
             libelf-dev \
             libssl-dev \
@@ -56,28 +55,29 @@ jobs:
             make \
             pahole \
             python3 \
+            python3-pip \
             rsync \
             unzip \
             wget \
             zip
 
       # ============================================================
-      # 3. CCACHE
+      # 3. CACHE
       # ============================================================
 
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
-          key: peridot-base
+          key: peridot-xiaomi-official
           max-size: 5G
 
       # ============================================================
-      # 4. CLONAR XIAOMI
+      # 4. XIAOMI KERNEL SOURCE
       # ============================================================
 
-      - name: Clone Xiaomi kernel
+      - name: Clone Xiaomi peridot-u-oss
         run: |
-          set -e
+          set -eux
 
           git clone \
             --depth=1 \
@@ -88,7 +88,7 @@ jobs:
           cd kernel
 
           echo "=========================================="
-          echo "XIAOMI PERIDOT"
+          echo "XIAOMI PERIDOT SOURCE"
           echo "=========================================="
 
           echo "Branch:"
@@ -97,29 +97,108 @@ jobs:
           echo "Commit:"
           git rev-parse HEAD
 
+          echo "Top-level:"
+          find . -maxdepth 1 -type f -printf '%f\n' | sort
+
       # ============================================================
-      # 5. COMPROBAR CONFIG
+      # 5. XIAOMI KERNEL BUILD REPOSITORY
       # ============================================================
 
-      - name: Check Peridot configuration
+      - name: Clone Xiaomi kernel_build
         run: |
-          set -e
+          set -eux
+
+          git clone \
+            --depth=1 \
+            https://github.com/MiCode/kernel_build.git \
+            kernel_build
+
+          echo "=========================================="
+          echo "XIAOMI KERNEL BUILD"
+          echo "=========================================="
+
+          find kernel_build -maxdepth 3 -type f | sort | head -300
+
+      # ============================================================
+      # 6. BUSCAR CONFIGURACION PERIDOT
+      # ============================================================
+
+      - name: Locate Peridot build configuration
+        run: |
+          set -eux
+
+          echo "=========================================="
+          echo "SEARCHING PERIDOT BUILD CONFIGURATION"
+          echo "=========================================="
+
+          echo ""
+          echo "Files containing peridot:"
+          grep -Ril \
+            "peridot-u-oss\|peridot" \
+            kernel_build \
+            --include='*.sh' \
+            --include='*.config' \
+            --include='*.mk' \
+            --include='*.json' \
+            --include='*.yaml' \
+            --include='*.yml' \
+            --include='README*' \
+            2>/dev/null \
+            | sort \
+            | head -100 || true
+
+          echo ""
+          echo "Build scripts:"
+          find kernel_build \
+            -type f \
+            \( -name 'build.sh' \
+            -o -name '*.sh' \
+            -o -name 'build.config*' \) \
+            | sort \
+            | head -200
+
+      # ============================================================
+      # 7. INSPECCIONAR BUILD DEL ARBOL KERNEL
+      # ============================================================
+
+      - name: Inspect kernel build files
+        run: |
+          set -eux
 
           cd kernel
 
-          test -f arch/arm64/configs/gki_defconfig
-          test -f arch/arm64/configs/vendor/peridot_GKI.config
+          echo "=========================================="
+          echo "KERNEL BUILD FILES"
+          echo "=========================================="
 
-          echo "[OK] gki_defconfig"
-          echo "[OK] peridot_GKI.config"
+          echo ""
+          echo "BUILD files:"
+          find . \
+            -maxdepth 4 \
+            -type f \
+            \( -name 'BUILD.bazel' \
+            -o -name 'build.config*' \
+            -o -name 'build.sh' \
+            -o -name 'BUILD' \) \
+            | sort \
+            | head -300
+
+          echo ""
+          echo "Defconfigs containing peridot:"
+          find arch -type f \
+            \( -name '*defconfig*' -o -name '*.config' \) \
+            2>/dev/null \
+            | grep -i peridot \
+            | sort \
+            | head -100 || true
 
       # ============================================================
-      # 6. PREPARAR OUTPUT
+      # 8. PREPARAR OUT
       # ============================================================
 
       - name: Prepare output
         run: |
-          set -e
+          set -eux
 
           cd kernel
 
@@ -127,150 +206,222 @@ jobs:
           mkdir -p out
 
       # ============================================================
-      # 7. CONFIGURAR GKI
+      # 9. DETERMINAR BUILD SYSTEM
       # ============================================================
 
-      - name: Configure GKI
+      - name: Detect Xiaomi build system
         run: |
-          set -e
+          set -eux
 
           cd kernel
-
-          export CC=clang
-          export LD=ld.lld
-          export AR=llvm-ar
-          export NM=llvm-nm
-          export OBJCOPY=llvm-objcopy
-          export OBJDUMP=llvm-objdump
-          export STRIP=llvm-strip
-
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
-
-          make \
-            O=out \
-            ARCH=arm64 \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            gki_defconfig
-
-      # ============================================================
-      # 8. APLICAR CONFIG PERIDOT
-      # ============================================================
-
-      - name: Apply Peridot GKI configuration
-        run: |
-          set -e
-
-          cd kernel
-
-          cat \
-            arch/arm64/configs/vendor/peridot_GKI.config \
-            >> out/.config
-
-          make \
-            O=out \
-            ARCH=arm64 \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            olddefconfig
-
-      # ============================================================
-      # 9. GUARDAR CONFIG
-      # ============================================================
-
-      - name: Save final config
-        run: |
-          set -e
-
-          cd kernel
-
-          cp \
-            out/.config \
-            out/defconfig-final
 
           echo "=========================================="
-          echo "CONFIG FINAL"
+          echo "BUILD SYSTEM DETECTION"
           echo "=========================================="
 
-          grep "^CONFIG_MODULES=" out/.config || true
-          grep "^CONFIG_KALLSYMS=" out/.config || true
-          grep "^CONFIG_KALLSYMS_ALL=" out/.config || true
+          if [ -f build/build.sh ]; then
+            echo "BUILD_SYSTEM=KERNEL_BUILD_SH" >> "$GITHUB_ENV"
+            echo "Detected: build/build.sh"
+
+          elif [ -f build.sh ]; then
+            echo "BUILD_SYSTEM=ROOT_BUILD_SH" >> "$GITHUB_ENV"
+            echo "Detected: build.sh"
+
+          elif find . -maxdepth 3 -name 'build.config*' -type f | grep -q .; then
+            echo "BUILD_SYSTEM=BUILD_CONFIG" >> "$GITHUB_ENV"
+            echo "Detected: build.config"
+
+          elif [ -f BUILD.bazel ]; then
+            echo "BUILD_SYSTEM=BAZEL" >> "$GITHUB_ENV"
+            echo "Detected: Bazel"
+
+          else
+            echo "BUILD_SYSTEM=UNKNOWN" >> "$GITHUB_ENV"
+            echo "No recognized build system found."
+          fi
 
       # ============================================================
-      # 10. COMPILAR KERNEL
+      # 10. MOSTRAR BUILD SYSTEM
       # ============================================================
 
-      - name: Build kernel
+      - name: Show detected build system
+        run: |
+          set -eux
+
+          echo "BUILD_SYSTEM=$BUILD_SYSTEM"
+
+      # ============================================================
+      # 11. BUILD VIA XIAOMI BUILD SYSTEM
+      # ============================================================
+
+      - name: Run Xiaomi build system
+        if: env.BUILD_SYSTEM != 'UNKNOWN'
         run: |
           set -eo pipefail
 
           cd kernel
 
-          export CC=clang
-          export LD=ld.lld
-          export AR=llvm-ar
-          export NM=llvm-nm
-          export OBJCOPY=llvm-objcopy
-          export OBJDUMP=llvm-objdump
-          export STRIP=llvm-strip
-
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
-
           echo "=========================================="
-          echo "BUILDING IMAGE"
+          echo "RUNNING XIAOMI BUILD SYSTEM"
           echo "=========================================="
 
-          make \
-            O=out \
-            ARCH=arm64 \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            -j"$(nproc)" \
-            Image \
-            2>&1 | tee out/build.log
+          if [ "$BUILD_SYSTEM" = "KERNEL_BUILD_SH" ]; then
+
+            chmod +x build/build.sh
+
+            ./build/build.sh \
+              2>&1 | tee out/xiaomi-build.log
+
+          elif [ "$BUILD_SYSTEM" = "ROOT_BUILD_SH" ]; then
+
+            chmod +x build.sh
+
+            ./build.sh \
+              2>&1 | tee out/xiaomi-build.log
+
+          elif [ "$BUILD_SYSTEM" = "BUILD_CONFIG" ]; then
+
+            CONFIG_FILE="$(find . \
+              -maxdepth 3 \
+              -type f \
+              -name 'build.config*' \
+              | grep -i peridot \
+              | head -1 || true)"
+
+            if [ -z "$CONFIG_FILE" ]; then
+              CONFIG_FILE="$(find . \
+                -maxdepth 3 \
+                -type f \
+                -name 'build.config*' \
+                | head -1)"
+            fi
+
+            echo "Using build config:"
+            echo "$CONFIG_FILE"
+
+            if [ -f build/build.sh ]; then
+              build/build.sh "$CONFIG_FILE" \
+                2>&1 | tee out/xiaomi-build.log
+            else
+              echo "No build/build.sh available."
+              exit 1
+            fi
+
+          elif [ "$BUILD_SYSTEM" = "BAZEL" ]; then
+
+            echo "Bazel build system detected."
+
+            if command -v bazel >/dev/null 2>&1; then
+              bazel --version
+            else
+              echo "Bazel is not installed."
+              echo "Installing Bazelisk..."
+
+              sudo curl -L \
+                https://github.com/bazelbuild/bazelisk/releases/latest/download/bazelisk-linux-amd64 \
+                -o /usr/local/bin/bazel
+
+              sudo chmod +x /usr/local/bin/bazel
+            fi
+
+            bazel --version
+
+            echo ""
+            echo "Available kernel Bazel targets:"
+            bazel query \
+              'kind(".*rule", //...)' \
+              2>/dev/null \
+              | grep -i \
+                "peridot\|kernel" \
+              | head -200 \
+              || true
+
+          fi
 
       # ============================================================
-      # 11. VERIFICAR IMAGE
+      # 12. FALLBACK: NO BUILD SYSTEM
       # ============================================================
 
-      - name: Verify Image
+      - name: Stop if Xiaomi build system was not detected
+        if: env.BUILD_SYSTEM == 'UNKNOWN'
         run: |
-          set -e
+          echo "::error::No Xiaomi build system detected."
+          echo ""
+          echo "This is intentional."
+          echo "We will NOT guess gki_defconfig."
+          echo "We will NOT create HWID stubs."
+          echo "We will NOT modify Kconfig."
+          echo ""
+          echo "Build files found:"
+          find kernel \
+            -maxdepth 4 \
+            -type f \
+            \( -name 'build.config*' \
+            -o -name 'build.sh' \
+            -o -name 'BUILD.bazel' \
+            \) \
+            | sort \
+            | head -300
 
-          cd kernel
+          exit 1
 
-          IMAGE="out/arch/arm64/boot/Image"
+      # ============================================================
+      # 13. BUSCAR IMAGE
+      # ============================================================
 
-          if [ ! -f "$IMAGE" ]; then
-            echo "::error::Image no fue generado"
+      - name: Locate generated Image
+        run: |
+          set -eux
+
+          echo "=========================================="
+          echo "SEARCHING GENERATED KERNEL"
+          echo "=========================================="
+
+          find kernel \
+            -type f \
+            \( -name 'Image' \
+            -o -name 'Image.gz' \
+            -o -name 'Image.lz4' \
+            -o -name 'Image.lz4-dtb' \
+            \) \
+            -size +2M \
+            -print \
+            | sort
+
+      # ============================================================
+      # 14. SELECCIONAR IMAGE
+      # ============================================================
+
+      - name: Select kernel Image
+        run: |
+          set -eux
+
+          IMAGE="$(find kernel \
+            -type f \
+            -name 'Image' \
+            -size +2M \
+            | head -1)"
+
+          if [ -z "$IMAGE" ]; then
+            echo "::error::No valid Image was generated."
             exit 1
           fi
 
-          echo "=========================================="
-          echo "IMAGE"
-          echo "=========================================="
+          echo "IMAGE_PATH=$IMAGE" >> "$GITHUB_ENV"
+
+          echo "Selected:"
+          echo "$IMAGE"
 
           ls -lh "$IMAGE"
           file "$IMAGE"
 
-          SIZE=$(stat -c%s "$IMAGE")
-
-          echo "Image size: $SIZE bytes"
-
-          if [ "$SIZE" -lt 2000000 ]; then
-            echo "::error::Image sospechosamente pequeño"
-            exit 1
-          fi
-
       # ============================================================
-      # 12. PREPARAR ANYKERNEL3
+      # 15. PREPARAR ANYKERNEL3
       # ============================================================
 
       - name: Clone AnyKernel3
         run: |
-          set -e
+          set -eux
 
           git clone \
             --depth=1 \
@@ -280,33 +431,30 @@ jobs:
           rm -rf AnyKernel3/.git
 
       # ============================================================
-      # 13. COPIAR IMAGE SIN COMPRIMIR
+      # 16. COPIAR IMAGE
       # ============================================================
 
-      - name: Copy Image
+      - name: Copy Xiaomi Image
         run: |
-          set -e
+          set -eux
 
           cp \
-            kernel/out/arch/arm64/boot/Image \
+            "$IMAGE_PATH" \
             AnyKernel3/Image
 
           ls -lh AnyKernel3/Image
 
       # ============================================================
-      # 14. CREAR ANYKERNEL.SH ESPECIFICO
+      # 17. ANYKERNEL BASE
       # ============================================================
 
       - name: Configure AnyKernel
         run: |
-          set -e
+          set -eux
 
           cat > AnyKernel3/anykernel.sh <<'EOF'
-          # AnyKernel3 Ramdisk Mod Script
-          # TEPUY Peridot BASE TEST
-
           properties() {
-          kernel.string=TEPUY Peridot BASE
+          kernel.string=TEPUY Peridot - Xiaomi Base
           do.devicecheck=0
           do.modules=0
           do.systemless=0
@@ -318,108 +466,88 @@ jobs:
           supported.patchlevels=
           }
 
-          ## AnyKernel setup
           . tools/ak3-core.sh;
 
-          ## Boot install
           dump_boot;
 
-          ## Replace ONLY kernel Image
           write_boot;
-
-          ## End
           EOF
 
           chmod 755 AnyKernel3/anykernel.sh
 
       # ============================================================
-      # 15. LIMPIAR ARCHIVOS INNECESARIOS
+      # 18. CREAR ZIP
       # ============================================================
 
-      - name: Clean AnyKernel package
+      - name: Create Xiaomi Base ZIP
         run: |
-          set -e
+          set -eux
 
           cd AnyKernel3
 
           rm -f \
             Image.gz \
-            zImage \
-            zImage-dtb \
-            Image-dtb \
             Image.lz4 \
             Image.lz4-dtb \
-            Image.bz2 \
-            Image.xz \
-            Image.lzma
-
-      # ============================================================
-      # 16. CREAR ZIP
-      # ============================================================
-
-      - name: Create kernel ZIP
-        run: |
-          set -e
-
-          cd AnyKernel3
+            zImage \
+            zImage-dtb
 
           zip \
             -r9 \
-            ../Tepuy-Peridot-BASE-Image.zip \
+            ../Tepuy-Peridot-Xiaomi-BASE.zip \
             . \
             -x "*.git*" \
             -x "*.zip"
 
           cd ..
 
-          ls -lh Tepuy-Peridot-BASE-Image.zip
+          ls -lh Tepuy-Peridot-Xiaomi-BASE.zip
 
       # ============================================================
-      # 17. BUILD INFO
+      # 19. BUILD INFORMATION
       # ============================================================
 
       - name: Generate build information
         run: |
-          set -e
+          set -eux
 
           mkdir -p build-info
 
-          echo "TEPUY PERIDOT BASE TEST" \
-            > build-info/build.txt
-
-          echo "" \
-            >> build-info/build.txt
-
-          echo "Kernel source:" \
-            >> build-info/build.txt
-
-          cd kernel
-
-          git rev-parse HEAD \
-            >> ../build-info/build.txt
-
-          echo "" \
-            >> ../build-info/build.txt
-
-          echo "Config:" \
-            >> ../build-info/build.txt
-
-          grep "^CONFIG_MODULES=" \
-            out/.config \
-            >> ../build-info/build.txt || true
+          {
+            echo "TEPUY PERIDOT - XIAOMI BASE"
+            echo "================================"
+            echo ""
+            echo "Kernel source:"
+            cd kernel
+            git remote -v
+            echo ""
+            echo "Commit:"
+            git rev-parse HEAD
+            echo ""
+            echo "Branch:"
+            git branch --show-current
+            echo ""
+            echo "Build system:"
+            echo "$BUILD_SYSTEM"
+            echo ""
+            echo "Image:"
+            echo "$IMAGE_PATH"
+          } > build-info/build.txt
 
       # ============================================================
-      # 18. SUBIR ARTIFACTS
+      # 20. UPLOAD ARTIFACTS
       # ============================================================
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v5
         with:
-          name: Tepuy-Peridot-BASE
+          name: Tepuy-Peridot-Xiaomi-BASE
           if-no-files-found: error
           path: |
-            Tepuy-Peridot-BASE-Image.zip
-            kernel/out/arch/arm64/boot/Image
-            kernel/out/defconfig-final
-            kernel/out/build.log
+            Tepuy-Peridot-Xiaomi-BASE.zip
+            kernel/**/Image
+            kernel/**/Image.gz
+            kernel/**/Image.lz4
+            kernel/**/xiaomi-build.log
+            kernel/out/**
             build-info/build.txt
