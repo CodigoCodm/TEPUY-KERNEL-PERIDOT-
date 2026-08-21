@@ -250,92 +250,131 @@ jobs:
 
           echo "BUILD_SYSTEM=$BUILD_SYSTEM"
 
-      # ============================================================
-      # 11. BUILD VIA XIAOMI BUILD SYSTEM
+            # ============================================================
+      # 11. BUILD XIAOMI - build.config.msm.peridot
       # ============================================================
 
-      - name: Run Xiaomi build system
-        if: env.BUILD_SYSTEM != 'UNKNOWN'
+      - name: Run Xiaomi Peridot build
         run: |
           set -eo pipefail
 
           cd kernel
 
           echo "=========================================="
-          echo "RUNNING XIAOMI BUILD SYSTEM"
+          echo "XIAOMI PERIDOT BUILD"
           echo "=========================================="
 
-          if [ "$BUILD_SYSTEM" = "KERNEL_BUILD_SH" ]; then
+          CONFIG="$PWD/build.config.msm.peridot"
 
-            chmod +x build/build.sh
+          if [ ! -f "$CONFIG" ]; then
+            echo "::error::build.config.msm.peridot not found"
+            exit 1
+          fi
 
-            ./build/build.sh \
+          echo "Build config:"
+          echo "$CONFIG"
+
+          echo ""
+          echo "=========================================="
+          echo "CONFIG CONTENT"
+          echo "=========================================="
+
+          sed -n '1,240p' "$CONFIG"
+
+          echo ""
+          echo "=========================================="
+          echo "BUILD CONFIG VARIABLES"
+          echo "=========================================="
+
+          grep -E \
+            '^(BRANCH|DEFCONFIG|BUILD_CONFIG|FILES|MAKE_GOALS|OUT_DIR|BUILD_CONFIG_FRAGMENTS|KERNEL_DIR|CLANG|LLVM)' \
+            "$CONFIG" \
+            || true
+
+          echo ""
+          echo "=========================================="
+          echo "AVAILABLE BUILD TOOLS"
+          echo "=========================================="
+
+          command -v bash || true
+          command -v make || true
+          command -v python3 || true
+          command -v clang || true
+          command -v bazel || true
+          command -v bazelisk || true
+
+          echo ""
+          echo "=========================================="
+          echo "BUILD FILES"
+          echo "=========================================="
+
+          find . \
+            -maxdepth 4 \
+            -type f \
+            \( \
+              -name 'build.sh' \
+              -o -name 'build.config*' \
+              -o -name 'BUILD.bazel' \
+              -o -name '.bazelrc*' \
+              -o -name 'kleaf' \
+            \) \
+            | sort
+
+          echo ""
+          echo "=========================================="
+          echo "SEARCHING BUILD.SH"
+          echo "=========================================="
+
+          BUILD_SH="$(find .. \
+            -type f \
+            -name 'build.sh' \
+            -print \
+            | head -1 || true)"
+
+          if [ -n "$BUILD_SH" ]; then
+            echo "Found build.sh:"
+            echo "$BUILD_SH"
+
+            chmod +x "$BUILD_SH"
+
+            "$BUILD_SH" "$CONFIG" \
               2>&1 | tee out/xiaomi-build.log
 
-          elif [ "$BUILD_SYSTEM" = "ROOT_BUILD_SH" ]; then
-
-            chmod +x build.sh
-
-            ./build.sh \
-              2>&1 | tee out/xiaomi-build.log
-
-          elif [ "$BUILD_SYSTEM" = "BUILD_CONFIG" ]; then
-
-            CONFIG_FILE="$(find . \
-              -maxdepth 3 \
-              -type f \
-              -name 'build.config*' \
-              | grep -i peridot \
-              | head -1 || true)"
-
-            if [ -z "$CONFIG_FILE" ]; then
-              CONFIG_FILE="$(find . \
-                -maxdepth 3 \
-                -type f \
-                -name 'build.config*' \
-                | head -1)"
-            fi
-
-            echo "Using build config:"
-            echo "$CONFIG_FILE"
-
-            if [ -f build/build.sh ]; then
-              build/build.sh "$CONFIG_FILE" \
-                2>&1 | tee out/xiaomi-build.log
-            else
-              echo "No build/build.sh available."
-              exit 1
-            fi
-
-          elif [ "$BUILD_SYSTEM" = "BAZEL" ]; then
-
-            echo "Bazel build system detected."
-
-            if command -v bazel >/dev/null 2>&1; then
-              bazel --version
-            else
-              echo "Bazel is not installed."
-              echo "Installing Bazelisk..."
-
-              sudo curl -L \
-                https://github.com/bazelbuild/bazelisk/releases/latest/download/bazelisk-linux-amd64 \
-                -o /usr/local/bin/bazel
-
-              sudo chmod +x /usr/local/bin/bazel
-            fi
-
-            bazel --version
+          else
+            echo "No build.sh found."
 
             echo ""
-            echo "Available kernel Bazel targets:"
-            bazel query \
-              'kind(".*rule", //...)' \
+            echo "Searching for build config consumers..."
+
+            grep -Ril \
+              "build.config.msm.peridot" \
+              .. \
+              --include='*.sh' \
+              --include='*.py' \
+              --include='*.mk' \
+              --include='BUILD*' \
               2>/dev/null \
-              | grep -i \
-                "peridot\|kernel" \
-              | head -200 \
+              | sort \
+              | head -100 \
               || true
 
+            echo ""
+            echo "Searching for build.sh references..."
+
+            grep -Ril \
+              "build.sh" \
+              .. \
+              --include='*.sh' \
+              --include='*.py' \
+              --include='README*' \
+              2>/dev/null \
+              | sort \
+              | head -100 \
+              || true
+
+            echo ""
+            echo "::error::Xiaomi build config found but its build entry point was not found."
+            exit 1
           fi
 
       # ============================================================
