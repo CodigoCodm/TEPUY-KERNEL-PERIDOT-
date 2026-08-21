@@ -568,7 +568,7 @@ jobs:
 
         ls -lh "$HOME/Tepuy-Kernel-Full-peridot.zip"
 
-    # ==========================================================
+     # ==========================================================
     # BUILD GAMEMODE MODULE
     # ==========================================================
 
@@ -623,99 +623,142 @@ jobs:
           module.prop service.sh
 
         ls -lh "$HOME/Tepuy-GameMode-AutoActivator.zip"
-              - name: Verificar Image compilado
-        shell: bash
-        run: |
-          set -e
 
-          echo "========================================"
-          echo " VERIFICANDO KERNEL IMAGE"
-          echo "========================================"
+    # ==========================================================
+    # VERIFY FINAL IMAGE
+    # ==========================================================
 
-          KERNEL_IMAGE="out/arch/arm64/boot/Image"
+    - name: Verificar Image compilado
+      shell: bash
+      run: |
+        set -e
 
-          if [ ! -f "$KERNEL_IMAGE" ]; then
-            echo ""
-            echo "ERROR: No se encontró:"
-            echo "$KERNEL_IMAGE"
-            echo ""
-            echo "Buscando imágenes disponibles..."
-            find out -type f \( \
+        cd "$HOME/kernel-peridot"
+
+        echo "========================================"
+        echo " VERIFICANDO KERNEL IMAGE"
+        echo "========================================"
+
+        KERNEL_IMAGE="out/arch/arm64/boot/Image"
+
+        if [ ! -f "$KERNEL_IMAGE" ]; then
+          echo ""
+          echo "::error::No se encontró Image:"
+          echo "$KERNEL_IMAGE"
+          echo ""
+
+          echo "===== ARCHIVOS DE BOOT ====="
+          find out/arch/arm64/boot -maxdepth 1 -type f -ls 2>/dev/null || true
+
+          echo ""
+          echo "===== BUSCANDO IMAGES ====="
+
+          find out -type f \
+            \( \
               -name "Image" -o \
               -name "Image.gz" -o \
               -name "Image.gz-dtb" -o \
               -name "Image.lz4" \
-            \) -print || true
+            \) \
+            -print || true
 
-            exit 1
-          fi
+          exit 1
+        fi
 
-          SIZE=$(stat -c%s "$KERNEL_IMAGE")
-          SIZE_MB=$((SIZE / 1024 / 1024))
+        SIZE=$(stat -c%s "$KERNEL_IMAGE")
+        SIZE_MB=$((SIZE / 1024 / 1024))
 
-          echo ""
-          echo "Image encontrado:"
-          ls -lh "$KERNEL_IMAGE"
-          echo "Tamaño: ${SIZE_MB} MB"
-          echo ""
+        echo ""
+        echo "Image encontrado:"
+        ls -lh "$KERNEL_IMAGE"
+        echo "Tamaño: ${SIZE_MB} MB"
+        echo ""
 
-          if [ "$SIZE" -lt 2000000 ]; then
-            echo "ERROR: Kernel image demasiado pequeño."
-            exit 1
-          fi
+        if [ "$SIZE" -lt 2000000 ]; then
+          echo "::error::Kernel Image demasiado pequeño."
+          echo "Tamaño en bytes: $SIZE"
+          exit 1
+        fi
 
-          echo "OK: Image válido."
+        echo "[OK] Image válido."
 
-      - name: Comprimir Image
-        shell: bash
-        run: |
-          set -e
+    # ==========================================================
+    # COMPRESS IMAGE
+    # ==========================================================
 
-          mkdir -p final
+    - name: Comprimir Image
+      shell: bash
+      run: |
+        set -e
 
-          cp out/arch/arm64/boot/Image final/Image
+        cd "$HOME/kernel-peridot"
 
-          echo "Comprimiendo Image..."
+        mkdir -p final
 
-          if command -v lz4 >/dev/null 2>&1; then
-            lz4 -f -l final/Image final/Image.lz4
-          else
-            echo "lz4 no está instalado."
-            echo "Conservando Image sin comprimir."
-          fi
+        cp \
+          out/arch/arm64/boot/Image \
+          final/Image
 
-          echo ""
-          echo "Archivos finales:"
-          ls -lh final/
+        echo "Comprimiendo Image..."
 
-      - name: Crear paquete del kernel
-        shell: bash
-        run: |
-          set -e
+        gzip -n -9 \
+          -c final/Image \
+          > final/Image.gz
 
-          cd final
+        echo ""
+        echo "===== ARCHIVOS FINALES ====="
 
-          if [ -f Image.lz4 ]; then
-            tar -czf ../peridot-kernel.tar.gz Image Image.lz4
-          else
-            tar -czf ../peridot-kernel.tar.gz Image
-          fi
+        ls -lh final/
 
-          cd ..
+    # ==========================================================
+    # CREATE KERNEL PACKAGE
+    # ==========================================================
 
-          echo ""
-          echo "========================================"
-          echo " PAQUETE GENERADO"
-          echo "========================================"
-          ls -lh peridot-kernel.tar.gz
+    - name: Crear paquete del kernel
+      shell: bash
+      run: |
+        set -e
 
-      - name: Subir kernel como artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: peridot-kernel
-          path: |
-            out/arch/arm64/boot/Image
-            final/Image
-            final/Image.lz4
-            peridot-kernel.tar.gz
-          if-no-files-found: error
+        cd "$HOME/kernel-peridot"
+
+        if [ -f final/Image.gz ]; then
+          tar -czf \
+            "$HOME/peridot-kernel.tar.gz" \
+            -C final \
+            Image Image.gz
+        else
+          tar -czf \
+            "$HOME/peridot-kernel.tar.gz" \
+            -C final \
+            Image
+        fi
+
+        echo ""
+        echo "========================================"
+        echo " PAQUETE GENERADO"
+        echo "========================================"
+
+        ls -lh "$HOME/peridot-kernel.tar.gz"
+
+    # ==========================================================
+    # FINAL ARTIFACTS
+    # ==========================================================
+
+    - name: Subir kernel como artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: Tepuy-Exclusive-8.0-Peridot-${{ github.event.inputs.build_mode }}
+        path: |
+          ${{ github.workspace }}/../kernel-peridot/out/arch/arm64/boot/Image
+          ${{ github.workspace }}/../kernel-peridot/out/arch/arm64/boot/Image.gz
+          ${{ github.workspace }}/../kernel-peridot/final/Image
+          ${{ github.workspace }}/../kernel-peridot/final/Image.gz
+          ${{ github.workspace }}/../kernel-peridot/out/build.log
+          ${{ github.workspace }}/../peridot-kernel.tar.gz
+          ${{ github.workspace }}/../boot_tepuy.img
+          ${{ github.workspace }}/../Tepuy-Kernel-Compat-peridot.zip
+          ${{ github.workspace }}/../Tepuy-Kernel-Full-peridot.zip
+          ${{ github.workspace }}/../Tepuy-GameMode-AutoActivator.zip
+        if-no-files-found: warn
+
+    
