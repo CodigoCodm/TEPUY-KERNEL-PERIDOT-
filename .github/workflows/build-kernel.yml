@@ -159,6 +159,63 @@ jobs:
             fi
           done
 
+      - name: Inspect missing Bazel tree
+        run: |
+          set -eux
+
+          cd xiaomi
+
+          echo "=========================================="
+          echo "BUILD TREE"
+          echo "=========================================="
+
+          if [ -d build ]; then
+            echo "[FOUND] build/"
+            find build -maxdepth 5 -type f | sort | head -500
+          else
+            echo "[MISSING] build/"
+          fi
+
+          echo ""
+          echo "=========================================="
+          echo "KLEAF REFERENCES"
+          echo "=========================================="
+
+          grep -RIn \
+            'build/kernel/kleaf' \
+            . \
+            --exclude-dir=.git \
+            2>/dev/null \
+            | head -200 \
+            || true
+
+          echo ""
+          echo "=========================================="
+          echo "BAZEL ROOT FILES"
+          echo "=========================================="
+
+          find . \
+            -maxdepth 2 \
+            -type f \
+            \( \
+              -name 'WORKSPACE*' \
+              -o -name 'MODULE.bazel' \
+              -o -name '.bazelrc*' \
+            \) \
+            -print \
+            | sort
+
+          echo ""
+          echo "=========================================="
+          echo "BUILD.BAZEL TARGETS"
+          echo "=========================================="
+
+          grep -nE \
+            'kernel_build|kernel_images|define_common_kernels|peridot|pineapple' \
+            BUILD.bazel \
+            | head -300 \
+            || true
+
       # ============================================================
       # 6. AUDIT KLEAF
       # ============================================================
