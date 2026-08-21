@@ -85,74 +85,112 @@ jobs:
           git rev-parse HEAD
 
             # ============================================================
-      # 4. LOCATE MSM-KERNEL BUILD TREE
+            # ============================================================
+      # 4. ANALIZAR DEPENDENCIAS DEL ARBOL PERIDOT
       # ============================================================
 
-      - name: Locate Xiaomi MSM build environment
+      - name: Analyze Peridot build dependencies
         run: |
           set -eux
 
           echo "=========================================="
-          echo "SEARCHING MSM BUILD ENVIRONMENT"
+          echo "PERIDOT BUILD DEPENDENCY ANALYSIS"
           echo "=========================================="
 
-          rm -rf msm-kernel
-
-          # --------------------------------------------------------
-          # Primero intentamos el repositorio ACK/MSM utilizado
-          # por los árboles Qualcomm.
-          # --------------------------------------------------------
-
-          git clone \
-            --depth=1 \
-            https://android.googlesource.com/kernel/msm \
-            msm-kernel \
-            || true
-
-          if [ -f msm-kernel/build.config.msm.pineapple ]; then
-            echo "[OK] Found build.config.msm.pineapple"
-          else
-            echo "[INFO] Standard MSM repository does not contain it."
-
-            rm -rf msm-kernel
-
-            # ------------------------------------------------------
-            # Intento Qualcomm kernel-build
-            # ------------------------------------------------------
-
-            git clone \
-              --depth=1 \
-              https://github.com/Qualcomm/kernel.git \
-              msm-kernel \
-              || true
-          fi
+          echo ""
+          echo "ROOT:"
+          pwd
 
           echo ""
           echo "=========================================="
-          echo "SEARCH RESULTS"
+          echo "SEARCH build.config.msm.pineapple"
           echo "=========================================="
 
-          if [ -f msm-kernel/build.config.msm.pineapple ]; then
-            echo "[SUCCESS]"
-            echo "Found:"
-            echo "msm-kernel/build.config.msm.pineapple"
-          else
-            echo "[NOT FOUND]"
-            echo ""
-            echo "Repositories tested:"
-            echo "1. android.googlesource.com/kernel/msm"
-            echo "2. github.com/Qualcomm/kernel.git"
-            echo ""
-            echo "Searching recursively:"
-            find msm-kernel \
-              -type f \
-              -name 'build.config.msm.pineapple' \
-              -print \
-              2>/dev/null \
-              || true
+          find . \
+            -type f \
+            -name 'build.config.msm.pineapple' \
+            -print \
+            2>/dev/null \
+            || true
 
-            exit 1
-          fi
+          echo ""
+          echo "=========================================="
+          echo "SEARCH ALL PINEAPPLE FILES"
+          echo "=========================================="
+
+          find . \
+            -type f \
+            \( \
+              -iname '*pineapple*' \
+              -o -iname '*msm*config*' \
+            \) \
+            | sort \
+            | head -500
+
+          echo ""
+          echo "=========================================="
+          echo "SEARCH build.config REFERENCES"
+          echo "=========================================="
+
+          grep -RIn \
+            "build.config.msm.pineapple" \
+            kernel \
+            --exclude-dir=.git \
+            2>/dev/null \
+            | head -200 \
+            || true
+
+          echo ""
+          echo "=========================================="
+          echo "SEARCH ROOT_DIR/msm-kernel"
+          echo "=========================================="
+
+          grep -RIn \
+            "ROOT_DIR.*msm-kernel" \
+            kernel \
+            --exclude-dir=.git \
+            2>/dev/null \
+            | head -200 \
+            || true
+
+          echo ""
+          echo "=========================================="
+          echo "GIT SUBMODULES"
+          echo "=========================================="
+
+          cd kernel
+
+          git submodule status || true
+
+          echo ""
+          echo "Submodule configuration:"
+          cat .gitmodules 2>/dev/null || echo "No .gitmodules"
+
+          echo ""
+          echo "=========================================="
+          echo "BUILD BAZEL"
+          echo "=========================================="
+
+          sed -n '1,320p' BUILD.bazel
+
+          echo ""
+          echo "=========================================="
+          echo "BUILD CONFIGS"
+          echo "=========================================="
+
+          for f in \
+            build.config.common \
+            build.config.msm.common \
+            build.config.msm.pineapple \
+            build.config.msm.peridot \
+            build.config.gki
+          do
+            if [ -f "$f" ]; then
+              echo ""
+              echo "===== $f ====="
+              cat "$f"
+            fi
+          done
 
       # ============================================================
       # 5. COMPROBAR BUILD CONFIG
