@@ -109,6 +109,7 @@ jobs:
           echo "=== Git information ==="
 
           git remote -v
+
           echo "Branch:"
           git branch --show-current
 
@@ -143,6 +144,7 @@ jobs:
           MISC_KCONFIG="drivers/misc/Kconfig"
 
           if [ -f "$HWID_KCONFIG" ]; then
+
             echo "[OK] HWID Kconfig exists"
 
           elif [ -f "$MISC_KCONFIG" ] && \
@@ -174,7 +176,9 @@ PY
             echo "[OK] Dangling HWID reference disabled"
 
           else
+
             echo "[OK] No dangling HWID reference"
+
           fi
 
       # ==========================================================
@@ -397,7 +401,11 @@ PY
           echo " MODULE SUPPORT"
           echo "=============================================="
 
-          if grep -q '^CONFIG_MODULES=y' out/.config; then
+          MODULES_CONFIG=$(grep '^CONFIG_MODULES=' out/.config 2>/dev/null || true)
+
+          echo "[INFO] $MODULES_CONFIG"
+
+          if [ "$MODULES_CONFIG" = "CONFIG_MODULES=y" ]; then
 
             echo "[OK] CONFIG_MODULES=y"
             echo "[INFO] Building modules"
@@ -408,6 +416,8 @@ PY
               2>&1 | tee -a out/build.log
 
             rm -rf "$HOME/modules_staging"
+
+            mkdir -p "$HOME/modules_staging"
 
             make O=out \
               INSTALL_MOD_PATH="$HOME/modules_staging" \
@@ -420,7 +430,9 @@ PY
           else
 
             echo "[INFO] CONFIG_MODULES is disabled"
-            echo "[INFO] Skipping modules/modules_install"
+            echo "[INFO] CONFIG_MODULES=$MODULES_CONFIG"
+            echo "[INFO] Skipping make modules"
+            echo "[INFO] Skipping modules_install"
             echo "[OK] Kernel-only build"
 
             rm -rf "$HOME/modules_staging"
