@@ -1,16 +1,11 @@
-name: TEPUY Peridot - Build Environment Audit
+name: TEPUY - Peridot Kernel Build
 
 on:
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 jobs:
-  audit:
-    name: Audit Xiaomi Peridot Build System
-    runs-on: ubuntu-22.04
-    timeout-minutes: 30
+  build:
+    runs-on: ubuntu-24.04
 
     env:
       ARCH: arm64
@@ -20,470 +15,317 @@ jobs:
 
     steps:
 
-      # ============================================================
-      # 1. CHECKOUT TEPUY
-      # ============================================================
-
-      - name: Checkout TEPUY
+      - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
 
-      # ============================================================
-      # 2. DEPENDENCIAS BASICAS
-      # ============================================================
+      - name: Detect kernel directory
+        shell: bash
+        run: |
+          set -eux
 
-      - name: Install dependencies
+          echo "=========================================="
+          echo "DETECTING KERNEL TREE"
+          echo "=========================================="
+
+          if [ -d kernel ] && [ -f kernel/Makefile ]; then
+            echo "kernel" > .kernel_dir
+          elif [ -d xiaomi ] && [ -f xiaomi/Makefile ]; then
+            echo "xiaomi" > .kernel_dir
+          elif [ -f Makefile ]; then
+            echo "." > .kernel_dir
+          else
+            echo "::error::Kernel Makefile not found"
+            exit 1
+          fi
+
+          KERNEL_DIR="$(cat .kernel_dir)"
+
+          echo "KERNEL_DIR=$KERNEL_DIR"
+          echo "KERNEL_DIR=$KERNEL_DIR" >> "$GITHUB_ENV"
+
+      - name: Install build dependencies
+        shell: bash
         run: |
           set -eux
 
           sudo apt-get update
 
           sudo apt-get install -y \
-            git \
             bc \
             bison \
-            build-essential \
             flex \
-            libelf-dev \
+            build-essential \
+            gcc-aarch64-linux-gnu \
+            binutils-aarch64-linux-gnu \
             libssl-dev \
-            python3 \
-            rsync \
-            unzip \
-            wget \
-            zip \
-            cpio \
+            libelf-dev \
             pahole \
-            file
+            cpio \
+            rsync \
+            python3 \
+            perl \
+            curl \
+            wget \
+            unzip \
+            zip \
+            p7zip-full \
+            tar \
+            xz-utils \
+            zstd
 
-      # ============================================================
-      # 3. CLONAR XIAOMI
-      # ============================================================
-
-      - name: Clone Xiaomi Peridot
+      - name: Prepare RealKing Clang
+        shell: bash
         run: |
           set -eux
 
-          rm -rf xiaomi
-
-          git clone \
-            --depth=1 \
-            --branch peridot-u-oss \
-            https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git \
-            xiaomi
-
-          cd xiaomi
-
           echo "=========================================="
-          echo "XIAOMI PERIDOT"
+          echo "REALKING CLANG"
           echo "=========================================="
 
-          git branch --show-current
-          git rev-parse HEAD
+          MAIN="$GITHUB_WORKSPACE"
+
+          if [ -d "$MAIN/clang/bin" ]; then
+            echo "Existing clang directory found."
+          else
+            echo "Downloading ZyC Stable Clang..."
+
+            CLANG_URL="$(curl -fsSL \
+              https://raw.githubusercontent.com/v3kt0r-87/Clang-Stable/main/clang-zyc.txt)"
+
+            test -n "$CLANG_URL"
+
+            echo "Clang URL:"
+            echo "$CLANG_URL"
+
+            wget \
+              --fail \
+              --show-progress \
+              "$CLANG_URL" \
+              -O "$MAIN/zyc-clang.tar.gz"
+
+            mkdir -p "$MAIN/clang"
+
+            tar \
+              -xvf "$MAIN/zyc-clang.tar.gz" \
+              -C "$MAIN/clang"
+
+            rm -f "$MAIN/zyc-clang.tar.gz"
+          fi
+
+          test -x "$MAIN/clang/bin/clang"
 
           echo ""
-          echo "TOP LEVEL"
-          echo "=========================================="
+          echo "Clang:"
+          "$MAIN/clang/bin/clang" --version
 
-          find . -maxdepth 2 -type f \
-            -not -path './.git/*' \
-            | sort \
-            | head -300
+          echo ""
+          echo "LLD:"
+          "$MAIN/clang/bin/ld.lld" --version
 
-      # ============================================================
-      # 4. AUDIT BUILD CONFIG
-      # ============================================================
+          echo ""
+          echo "LLVM NM:"
+          "$MAIN/clang/bin/llvm-nm" --version | head -1
 
-      - name: Audit build configs
+          echo ""
+          echo "LLVM OBJDUMP:"
+          "$MAIN/clang/bin/llvm-objdump" --version | head -1
+
+          echo ""
+          echo "LLVM STRIP:"
+          "$MAIN/clang/bin/llvm-strip" --version | head -1
+
+          echo ""
+          echo "PATH:"
+          echo "$MAIN/clang/bin" >> "$GITHUB_PATH"
+
+          echo "CLANG_DIR=$MAIN/clang" >> "$GITHUB_ENV"
+
+      - name: Verify Peridot source
+        shell: bash
         run: |
           set -eux
 
-          cd xiaomi
+          cd "$KERNEL_DIR"
 
           echo "=========================================="
-          echo "PERIDOT BUILD CONFIG"
+          echo "PERIDOT SOURCE"
           echo "=========================================="
 
-          if [ -f build.config.msm.peridot ]; then
-            cat build.config.msm.peridot
-          else
-            echo "::error::build.config.msm.peridot missing"
+          pwd
+
+          echo ""
+          echo "Git:"
+          git rev-parse --short HEAD || true
+          git describe --tags --always || true
+
+          echo ""
+          echo "Checking Makefile..."
+          test -f Makefile
+
+          echo ""
+          echo "Checking peridot_defconfig..."
+          test -f arch/arm64/configs/peridot_defconfig
+
+          echo ""
+          echo "peridot_defconfig FOUND"
+
+      - name: Verify compiler environment
+        shell: bash
+        run: |
+          set -eux
+
+          echo "=========================================="
+          echo "COMPILER ENVIRONMENT"
+          echo "=========================================="
+
+          command -v clang
+          command -v clang++
+          command -v ld.lld
+          command -v llvm-nm
+          command -v llvm-objdump
+          command -v llvm-strip
+          command -v aarch64-linux-gnu-gcc
+
+          echo ""
+          clang --version
+          echo ""
+          aarch64-linux-gnu-gcc --version | head -1
+
+      - name: Generate Peridot defconfig
+        shell: bash
+        run: |
+          set -eux
+
+          cd "$KERNEL_DIR"
+
+          echo "=========================================="
+          echo "PERIDOT DEFCONFIG"
+          echo "=========================================="
+
+          rm -rf out
+          mkdir -p out
+
+          make \
+            peridot_defconfig \
+            O=out \
+            CC=clang
+
+          test -f out/.config
+
+          echo ""
+          echo "Defconfig generated successfully."
+
+      - name: Build Peridot kernel
+        shell: bash
+        run: |
+          set -eux
+
+          cd "$KERNEL_DIR"
+
+          echo "=========================================="
+          echo "BUILDING PERIDOT"
+          echo "=========================================="
+
+          echo "CPU threads:"
+          nproc --all
+
+          echo ""
+          echo "Compiler:"
+          clang --version
+
+          echo ""
+          echo "Starting build..."
+
+          make \
+            -j"$(nproc --all)" \
+            O=out \
+            CC=clang \
+            ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            NM=llvm-nm \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip
+
+      - name: Verify Image.gz
+        shell: bash
+        run: |
+          set -eux
+
+          cd "$KERNEL_DIR"
+
+          echo "=========================================="
+          echo "VERIFYING KERNEL"
+          echo "=========================================="
+
+          ZIMAGE="out/arch/arm64/boot/Image.gz"
+
+          if [ ! -f "$ZIMAGE" ]; then
+            echo "::error::Image.gz was not generated"
+            echo ""
+            echo "Available boot outputs:"
+            find out/arch/arm64/boot \
+              -maxdepth 2 \
+              -type f \
+              2>/dev/null \
+              | sort || true
             exit 1
           fi
 
-          echo ""
-          echo "=========================================="
-          echo "ALL BUILD CONFIGS"
-          echo "=========================================="
-
-          find . \
-            -type f \
-            -name 'build.config*' \
-            -not -path './.git/*' \
-            | sort
-
-      # ============================================================
-      # 5. AUDIT MSM-KERNEL
-      # ============================================================
-
-      - name: Audit msm-kernel dependency
-        run: |
-          set -eux
-
-          cd xiaomi
-
-          echo "=========================================="
-          echo "MSM-KERNEL DEPENDENCY"
-          echo "=========================================="
-
-          grep -RIn \
-            'msm-kernel' \
-            . \
-            --exclude-dir=.git \
-            2>/dev/null \
-            | head -300 \
-            || true
+          echo "Image.gz:"
+          ls -lh "$ZIMAGE"
 
           echo ""
-          echo "Expected files:"
-          echo ""
-
-          for f in \
-            msm-kernel/build.config.common \
-            msm-kernel/build.config.aarch64 \
-            msm-kernel/build.config.msm.common \
-            msm-kernel/build.config.msm.pineapple
-          do
-            if [ -f "$f" ]; then
-              echo "[FOUND] $f"
-            else
-              echo "[MISSING] $f"
-            fi
-          done
-
-      - name: Inspect missing Bazel tree
-        run: |
-          set -eux
-
-          cd xiaomi
-
-          echo "=========================================="
-          echo "BUILD TREE"
-          echo "=========================================="
-
-          if [ -d build ]; then
-            echo "[FOUND] build/"
-            find build -maxdepth 5 -type f | sort | head -500
-          else
-            echo "[MISSING] build/"
+          echo "Image:"
+          if [ -f out/arch/arm64/boot/Image ]; then
+            ls -lh out/arch/arm64/boot/Image
           fi
 
-          echo ""
-          echo "=========================================="
-          echo "KLEAF REFERENCES"
-          echo "=========================================="
-
-          grep -RIn \
-            'build/kernel/kleaf' \
-            . \
-            --exclude-dir=.git \
-            2>/dev/null \
-            | head -200 \
-            || true
-
-          echo ""
-          echo "=========================================="
-          echo "BAZEL ROOT FILES"
-          echo "=========================================="
-
-          find . \
-            -maxdepth 2 \
-            -type f \
-            \( \
-              -name 'WORKSPACE*' \
-              -o -name 'MODULE.bazel' \
-              -o -name '.bazelrc*' \
-            \) \
-            -print \
-            | sort
-
-          echo ""
-          echo "=========================================="
-          echo "BUILD.BAZEL TARGETS"
-          echo "=========================================="
-
-          grep -nE \
-            'kernel_build|kernel_images|define_common_kernels|peridot|pineapple' \
-            BUILD.bazel \
-            | head -300 \
-            || true
-
-      # ============================================================
-      # 6. AUDIT KLEAF
-      # ============================================================
-
-      - name: Audit Kleaf
+      - name: Collect build information
+        shell: bash
         run: |
           set -eux
 
-          cd xiaomi
+          cd "$KERNEL_DIR"
 
-          echo "=========================================="
-          echo "KLEAF AUDIT"
-          echo "=========================================="
+          mkdir -p "$GITHUB_WORKSPACE/dist"
 
-          echo "Searching Kleaf directories..."
+          cp \
+            out/arch/arm64/boot/Image.gz \
+            "$GITHUB_WORKSPACE/dist/Image.gz"
 
-          find . \
-            -type d \
-            \( \
-              -name kleaf \
-              -o -name 'build' \
-            \) \
-            -not -path './.git/*' \
-            | sort \
-            | head -200
-
-          echo ""
-          echo "Searching Kleaf files..."
-
-          find . \
-            -type f \
-            \( \
-              -name 'workspace.bzl' \
-              -o -name 'kernel.bzl' \
-              -o -name 'kleaf.bzl' \
-              -o -name 'common_kernels.bzl' \
-              -o -name 'constants.bzl' \
-            \) \
-            -not -path './.git/*' \
-            | sort
-
-      # ============================================================
-      # 7. AUDIT BAZEL
-      # ============================================================
-
-      - name: Audit Bazel
-        run: |
-          set -eux
-
-          cd xiaomi
-
-          echo "=========================================="
-          echo "BAZEL AUDIT"
-          echo "=========================================="
-
-          command -v bazel || true
-          command -v bazelisk || true
-
-          echo ""
-          echo "Bazel files:"
-
-          find . \
-            -type f \
-            \( \
-              -name 'BUILD' \
-              -o -name 'BUILD.bazel' \
-              -o -name 'WORKSPACE' \
-              -o -name 'WORKSPACE.bazel' \
-              -o -name 'MODULE.bazel' \
-              -o -name '.bazelrc*' \
-            \) \
-            -not -path './.git/*' \
-            | sort
-
-      # ============================================================
-      # 8. AUDIT SUBMODULES
-      # ============================================================
-
-      - name: Audit git submodules
-        run: |
-          set -eux
-
-          cd xiaomi
-
-          echo "=========================================="
-          echo "GIT SUBMODULES"
-          echo "=========================================="
-
-          git submodule status || true
-
-          echo ""
-          echo "=========================================="
-          echo ".gitmodules"
-          echo "=========================================="
-
-          if [ -f .gitmodules ]; then
-            cat .gitmodules
-          else
-            echo "No .gitmodules"
+          if [ -f out/arch/arm64/boot/Image ]; then
+            cp \
+              out/arch/arm64/boot/Image \
+              "$GITHUB_WORKSPACE/dist/Image"
           fi
-
-      # ============================================================
-      # 9. AUDIT PERIDOT TARGETS
-      # ============================================================
-
-      - name: Search Peridot build targets
-        run: |
-          set -eux
-
-          cd xiaomi
-
-          echo "=========================================="
-          echo "PERIDOT TARGETS"
-          echo "=========================================="
-
-          grep -RIn \
-            -E \
-            'peridot|kernel_build|kernel_aarch64|define_common_kernels' \
-            . \
-            --exclude-dir=.git \
-            --include='BUILD' \
-            --include='BUILD.bazel' \
-            --include='*.bzl' \
-            --include='build.config*' \
-            2>/dev/null \
-            | head -500 \
-            || true
-
-      # ============================================================
-      # 10. SEARCH BUILD ENTRY POINTS
-      # ============================================================
-
-      - name: Search build entry points
-        run: |
-          set -eux
-
-          cd xiaomi
-
-          echo "=========================================="
-          echo "BUILD ENTRY POINTS"
-          echo "=========================================="
-
-          find . \
-            -type f \
-            \( \
-              -name 'build.sh' \
-              -o -name 'build_kernel.sh' \
-              -o -name 'build.py' \
-              -o -name 'build_kernel.py' \
-              -o -name 'kleaf.py' \
-            \) \
-            -not -path './.git/*' \
-            | sort
-
-      # ============================================================
-      # 11. SEARCH REFERENCES TO PERIDOT CONFIG
-      # ============================================================
-
-      - name: Search config consumers
-        run: |
-          set -eux
-
-          cd xiaomi
-
-          echo "=========================================="
-          echo "CONFIG CONSUMERS"
-          echo "=========================================="
-
-          grep -Ril \
-            'build.config.msm.peridot' \
-            . \
-            --exclude-dir=.git \
-            2>/dev/null \
-            | sort \
-            | head -200 \
-            || true
-
-      # ============================================================
-      # 12. CHECK KERNEL CONFIGS
-      # ============================================================
-
-      - name: Audit kernel configs
-        run: |
-          set -eux
-
-          cd xiaomi
-
-          echo "=========================================="
-          echo "PERIDOT CONFIGS"
-          echo "=========================================="
-
-          find arch/arm64/configs \
-            -type f \
-            | grep -Ei \
-              'peridot|gki|pineapple' \
-            | sort \
-            | head -300 \
-            || true
-
-      # ============================================================
-      # 13. CREATE AUDIT REPORT
-      # ============================================================
-
-      - name: Create audit report
-        run: |
-          set -eux
-
-          cd xiaomi
-
-          mkdir -p ../audit
 
           {
-            echo "TEPUY PERIDOT BUILD AUDIT"
-            echo "========================="
-            echo ""
-            echo "Branch:"
-            git branch --show-current
+            echo "=========================================="
+            echo "TEPUY PERIDOT BUILD"
+            echo "=========================================="
             echo ""
             echo "Commit:"
-            git rev-parse HEAD
+            git rev-parse HEAD || true
             echo ""
-            echo "Build configs:"
-            find . \
-              -type f \
-              -name 'build.config*' \
-              -not -path './.git/*' \
-              | sort
+            echo "Compiler:"
+            clang --version
             echo ""
-            echo "Kleaf:"
-            find . \
-              -type f \
-              \( \
-                -name 'workspace.bzl' \
-                -o -name 'kernel.bzl' \
-                -o -name 'kleaf.bzl' \
-              \) \
-              -not -path './.git/*' \
-              | sort
+            echo "Defconfig:"
+            echo "peridot_defconfig"
             echo ""
-            echo "Bazel:"
-            find . \
-              -type f \
-              \( \
-                -name 'BUILD.bazel' \
-                -o -name 'WORKSPACE' \
-                -o -name 'MODULE.bazel' \
-              \) \
-              -not -path './.git/*' \
-              | sort
+            echo "Build user:"
+            echo "$KBUILD_BUILD_USER"
             echo ""
-            echo "Build scripts:"
-            find . \
-              -type f \
-              -name 'build*.sh' \
-              -not -path './.git/*' \
-              | sort
-          } > ../audit/peridot-build-audit.txt
+            echo "Build host:"
+            echo "$KBUILD_BUILD_HOST"
+          } > "$GITHUB_WORKSPACE/dist/build-info.txt"
 
-          cat ../audit/peridot-build-audit.txt
-
-      # ============================================================
-      # 14. UPLOAD EVERYTHING
-      # ============================================================
-
-      - name: Upload audit
+      - name: Upload kernel
         uses: actions/upload-artifact@v4
         with:
-          name: Tepuy-Peridot-Build-Audit
+          name: tepuy-peridot-kernel
+          path: dist/
           if-no-files-found: error
-          path: |
-            audit/peridot-build-audit.txt
